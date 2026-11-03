@@ -1,0 +1,37 @@
+{
+  "_说明": "主动回复（群里没人 @ 小忺时，它主动接话）的全部参数都在这里。改完保存立即生效，无需重启机器人。",
+  "enabled": true,
+  "default_level": "中",
+  "levels": {
+    "关闭": {
+      "enabled": false,
+      "chance": 0.0,
+      "cooldown": 999999
+    },
+    "低": {
+      "enabled": true,
+      "chance": 0.06,
+      "cooldown": 120
+    },
+    "极低": {
+      "enabled": true,
+      "chance": 0.02,
+      "cooldown": 300
+    },
+    "近乎静默": {
+      "enabled": true,
+      "chance": 0.005,
+      "cooldown": 900
+    },
+    "中": {
+      "enabled": true,
+      "chance": 0.15,
+      "cooldown": 30
+    },
+    "高": {
+      "enabled": true,
+      "chance": 0.35,
+      "cooldown": 10
+    }
+  }
+}

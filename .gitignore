@@ -1,0 +1,42 @@
+# ---------- 含密钥的本地配置（切勿提交） ----------
+config.json
+# 累计词元用量统计
+usage.json
+
+# ---------- 本地运行时数据（签到 / 小游戏 / 群友池 / 天气 / 设置） ----------
+checkin.json
+games.json
+weather.json
+c2c_users.json
+groups.json
+bot_settings.json
+security.log
+
+# ---------- 隐私 / 本地数据：群聊日志、训练数据、群友档案 ----------
+data/
+members.json
+assets/members.json
+assets/bot_openids.json
+assets/voice_config.json
+assets/auto_learn_state.json
+assets/auto_learn.json
+assets/persona.json.bak
+assets/*.bak
+
+# ---------- 根目录备份文件（含真实代码的旧备份，切勿提交） ----------
+*.bak*
+
+# ---------- 大文件 / 二进制（权重、音频、图片） ----------
+core/models/
+logs/
+images/
+assets/训练音频/
+assets/voice_xiaoxin.wav
+*.db
+*.migrated
+*.wav
+*.mp3
+
+# ---------- Python ----------
+__pycache__/
+*.pyc
