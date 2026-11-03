@@ -15,6 +15,7 @@ security.log
 # ---------- 隐私 / 本地数据：群聊日志、训练数据、群友档案 ----------
 data/
 members.json
+MEMORY.md
 assets/members.json
 assets/bot_openids.json
 assets/voice_config.json
