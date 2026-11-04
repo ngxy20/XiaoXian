@@ -1,0 +1,1281 @@
+# 261020-ing · 规范化提示词库（v1.0 / 2026-11-04 重写）
+
+> 本文件原有 203 条历史提问，现已按规范化提示词标准逐条重写。
+> 用法：整段复制某条的 `###` 区块发给 AI 即可执行；所有条目默认继承 §0.4 公共约束，无需重复粘贴。
+> 原历史提问中大量 `E:\Desktop\jiqiren` 路径、被截断的日志、`@image:` 引用、"继续/这个/可以" 等指代，均已在改写时显式标注或替换。
+
+---
+
+## 0. 规范化提示词标准与项目约定
+
+### 0.1 采用的规范：RCTIKOV 七要素（结构化提示词通用写法）
+
+| 要素 | 含义 | 本库落地方式 |
+|---|---|---|
+| **R** 角色 Role | 谁来做、具备什么知识 | §0.4 第 1 条统一给出，单条不再重复 |
+| **C** 背景 Context | 项目现状、前因后果 | 单条 `【背景】`（必要时与任务合并） |
+| **T** 任务 Task | 一个可交付、可判定的动作 | `【任务】`，动词开头，**一条只做一件事** |
+| **I** 输入 Input | 数据、日志、截图、文件路径 | `【文件】`，必须给 `<ROOT>` 相对路径 + 函数名/常量名 |
+| **K** 约束 Constraints | 边界、禁止项、兼容性 | `【约束】` |
+| **O** 输出 Output | 交付物的具体格式 | `【输出】` |
+| **V** 验收 Verification | 可复现的检查命令或现象 | `【验收】`（与输出合写为一行） |
+
+补充三条硬规则：
+1. **单一职责**：一条提示词只解决一个问题；多诉求拆成多条并标明顺序。
+2. **零指代**：禁止"这个 / 那种 / 继续 / 加 / 做进去 / 实现一下"等无对象表述，必须写出对象名、编号或文件路径。
+3. **零明文密钥**：API Key / Token / Cookie / openid 一律写占位符 `<见 config.json>`，禁止出现在提示词、示例与回复中。
+
+### 0.2 路径变量
+
+- `<ROOT>` = `c:/Users/FZY/Desktop/jiqiren_v0.1`（当前工作区）。历史文本里的 `E:\Desktop\jiqiren`、`e:/Desktop/jiqiren` **一律作废**。
+- PowerShell 进入项目：`Set-Location 'c:/Users/FZY/Desktop/jiqiren_v0.1'`。
+- 主程序唯一改动点：`<ROOT>/qq_bot_relay.py`；`<ROOT>/qq_bot_relay.py.bak20261103` 为历史备份，**只读勿改**。
+
+### 0.3 需求 → 文件落点速查（写提示词时按此指定文件）
+
+| 需求类别 | 必看文件 / 函数 |
+|---|---|
+| 消息入口与 @ / 私聊 | `qq_bot_relay.py`：`on_group_message_create`、`on_group_at_message_create`、`on_c2c_message_create`、`on_ready`、`_reply`、`parse_group_content` |
+| 指令与菜单 | `qq_bot_relay.py`：`COMMANDS` 字典、`handle_command`、各 `_cmd_*`、`_cmd_help` |
+| 配置读写 | `qq_bot_relay.py`：`CONFIG_FILE`、`DEFAULT_CONFIG`、`load_config`、`_config_fresh`、`save_config_key`、`load_usage`/`save_usage`；模板 `config.example.json` |
+| 人设 | `assets/persona.json`（运行时，mtime 热更新）、`assets/persona.base.json`（手写基线）；`load_persona`/`build_persona_prompt`/`_cmd_persona` |
+| 语音 TTS / 唱歌 | `qq_bot_relay.py`：`_tts_mimo`、`_tts_voice_studio`、`_send_voice`、`_handle_sing`、`_voice_plan`、`_push_voice`、`_make_voice_sample`、`_handle_import_voice`；配置 `assets/voice_config.json` |
+| 主动接话 / 定时道安 / 回复频率 | `qq_bot_relay.py`：`load_proactive_config`、`_greet_scheduler`、`_push_one`、`_greet_text`、`get_reply_freq`/`set_reply_freq`、`_cmd_proactive`；配置 `assets/proactive_config.json`、`groups.json` |
+| 图片 / 图库 / 爬虫 | `qq_bot_relay.py`：`_crawl_keyword_image`、`_tajiduo_search_items`、`crawl_miyoushe_images`、`crawl_images`、`_fetch_and_save`、`_add_to_image_lib`、`_add_to_emoticon_lib`、`_cmd_draw`/`_cmd_search`/`_cmd_fetch`；目录 `images/`，索引写 `config.json` 的 `IMAGE_LIB`/`EMOTICON_LIB` |
+| 情绪 / 语气 | `qq_bot_relay.py`：`_choose_story_emotion`、`_choose_voice_emotion`、`_cmd_emotion`；`core/emotion_model.py`、`assets/emotion_labels.json` |
+| 本地记忆 / 用户画像 | `core/memory.py`（`record`/`get_history`/`profile_prompt`/`remember_fact`），库 `data/memory.db`；主程序 `_cmd_remember`/`_cmd_aboutme` |
+| @ 自识别 / 群友档案 | `qq_bot_relay.py`：`_leading_at_openid`、`_mention_fields`、`_learn_bot_openid`、`/认领`、`_get_member_name`、`_try_remember_member`；持久化 `assets/bot_openids.json`、`assets/members.json` |
+| 安全 / 违禁词 / 限流 | `qq_bot_relay.py`：`_load_banned`、`_censor`、`_rate_ok`、`_log_security`；`assets/banned_words.json`、`logs/security.log` |
+| 训练与数据 | `training/`（`label_emotion.py`、`train_emotion.py`、`train_intent.py`、`train_nlp.py`、`build_dataset.py`、`expand_qa.py`、`scrape_kaomoji.py`）、`core/`（推理层）、`emotion_labeler.py`、`data/*.jsonl`、权重 `core/models/emotion_bert.pt` |
+| 自动学说话 | `auto_learn.py`、`assets/auto_learn.json`、`assets/auto_learn_state.json`、`logs/auto_learn.log` |
+| 运行日志 | `logs/botpy.log.*`、`logs/security.log`、`data/usage.json`、`MEMORY.md`（含已验证修复清单，行号会漂移，以函数名为准） |
+
+配置分层：可提交 = `config.example.json` + `assets/{persona,persona.base,proactive_config,emotion_labels,banned_words,kaomoji}.json`；本地私密（`.gitignore` 忽略、磁盘上存在）= `config.json`、`groups.json`、`assets/{voice_config,bot_openids,members,auto_learn,auto_learn_state}.json`、`data/`、`images/`、`logs/`。
+
+### 0.4 公共约束（以下所有条目均默认继承）
+
+1. **角色**：你是本项目（QQ 官方机器人「小忺」，botpy + Python）的维护工程师，熟悉 QQ 开放平台 API、LLM/TTS 接口、爬虫与本地训练链路；回答以可运行代码和配置为准。
+2. **改动范围**：只改本条 `【文件】` 明确列出的文件；未列出的文件不动，不顺手重构、不删历史备份。
+3. **配置改动**：新增/修改配置键必须同步内置兜底（`DEFAULT_CONFIG` 或 `_VOICE_CFG_FALLBACK`）**以及** `load_*`/`save_*` 的字段白名单，否则读不到（见 `MEMORY.md` §6 陷阱）。
+4. **密钥**：QQ/LLM/TTS 的 AppID、Secret、Token、BILI_COOKIE 只从 `<ROOT>/config.json` 读取；禁止硬编码、禁止写入 `config.example.json`、禁止在回复或日志里回显真实值。
+5. **生效方式**：改 `.py` 后必须重启 `python qq_bot_relay.py`；改 JSON 大多按 mtime 热更新，需说明是否要重启。
+6. **编译自检**：`python -X utf8 -c "import py_compile; py_compile.compile('qq_bot_relay.py', doraise=True); print('compile ok')"`。
+7. **词元成本**：优先本地/规则/免费方案，避免逐条消息调用大模型；用量看 `data/usage.json`，预算说明见 `MEMORY.md` §0。
+8. **输出格式**：先给「改动文件清单 + 关键代码/配置片段」，再给「验证步骤 + 回滚方式」；不写空泛建议，不一次交付多个无关方案。
+9. **日志/截图类输入**：必须附完整 Traceback、日志原文、复现步骤；信息不足时先列出「需要补齐的信息」再动手，禁止猜测。
+10. **兼容**：不破坏群聊/私聊双入口、不破坏 `voice_only`、不破坏已验证修复（`MEMORY.md` §1、§2）。
+
+### 0.5 六类模板（每条标题的【字母】即类别）
+
+- **A 功能开发**：背景 + 任务 + 涉及文件 + 约束 + 输出/验收（含命令）。
+- **B 缺陷排错**：现象 + 完整日志/复现步骤 + 怀疑范围文件 + 要求「先定位根因再给最小修复」+ 验证日志特征。
+- **C 配置调整**：目标值 + 配置文件精确键路径 + 同步兜底/白名单 + 热更新或重启说明。
+- **D 资料注入**：给出资料来源/粘贴全文 + 要求「只提炼与本项目相关的接入点」+ 指定落地文件 + 明确「未确认前不改动线上配置」。
+- **E 咨询方案**：问题边界 + 需要对比的维度 + 输出表格 + 明确「只答不改代码」。
+- **F 指代不明**：原句不可直接执行；统一改写为「承接上一轮 + 明确对象 + 明确范围 + 明确验收」的续写提示词，并列出需用户补齐的信息。
+
+---
+
+## 1. 逐条规范化（001–035 · 接入、指令、词元、颜文字）
+
+### 001【E】QQ 凭证来源澄清
+> 原：QQ现在没有明文QQ_SECRET，都是用扫码的
+- 【背景/任务】确认本项目 botpy 官方机器人接入下 `QQ_APPID`/`QQ_SECRET` 的获取方式，说明「扫码登录」是否适用于官方机器人，以及不适用时的替代流程。
+- 【文件】`<ROOT>/qq_bot_relay.py` 的 `load_config()`、`on_ready()`；`<ROOT>/config.json`（私密）、`config.example.json`（模板）。
+- 【约束/输出/验收】只答不改代码；不回显真实凭证。输出：①结论表（官方机器人 vs C2C 扫码）②需改位置清单 ③用 `python qq_bot_relay.py` 启动日志 `[配置] 已读取 …` 验证键被读到。
+
+### 002【A】凭证改为从文件读取
+> 原：采用读取文件里的QQ_APPID和QQ_SECRET更安全吧
+- 【任务】把 QQ 凭证统一改为从 `<ROOT>/config.json` 读取，代码与示例模板中不留任何明文。
+- 【文件】`qq_bot_relay.py` 的 `CONFIG_FILE`/`DEFAULT_CONFIG`/`load_config()`；`config.example.json`（占位符）；`.gitignore`（确认忽略 `config.json`）。
+- 【约束/输出/验收】密钥缺失时给清晰报错而非崩溃；`config.example.json` 只留 `<你的AppID>`。验收：编译自检通过、启动日志显示读取成功，且 `git grep` 搜不到真实密钥。
+
+### 003【C】`PLATFORM_API_URL` 该填什么
+> 原："PLATFORM_API_URL": "https://你的平台域名/api/chat",这个写什么
+- 【任务】说明 `PLATFORM_API_URL` 的含义、何时需要填写、不填时的默认行为，并给出填写示例（用占位域名）。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_sizhi()`/`answer_from_llm()`、`DEFAULT_CONFIG` 中 `PLATFORM_*` 系列键；`config.example.json`。
+- 【约束/输出/验收】区分 `ENABLE_PLATFORM_API` 开关与 URL；输出配置项表格 + 一条最小可用示例；验收：关闭开关时启动不报错。
+
+### 004【D】第三方大模型对话接口示例
+> 原：大模型对话 1.请求示例： https://api.sizhi.com/chat?appid=92cb3254afa04…
+- 【任务】阅读粘贴的「大模型对话请求示例」全文（含被截断的 `appid=` 之后部分），提炼出与本项目 `answer_from_sizhi()` 对接所需的 URL、参数、鉴权与返回字段。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_sizhi()`、`get_answer()`；配置 `config.json` 的 `PLATFORM_*`；输出落点 `config.example.json` 的占位键。
+- 【约束/输出/验收】资料不完整（示例被 `…` 截断）时先列出需补齐的字段，不猜接口；`appid` 等真实值一律用占位符。输出：字段对照表 + 最小改动清单；验收：mock 响应能解析出回复文本。
+
+### 005【F】只要方案 A + 改动清单
+> 原：不是我只要方案A多余的都不要，然后我需要改的地方列出来
+- 【规范化】承接上一轮对话：**只输出方案 A（从 `config.json` 读取 QQ 凭证）的实现**，删除其余备选方案与背景铺垫。
+- 【输出/验收】只给：①改动文件清单（精确到 `<ROOT>/qq_bot_relay.py` 的函数名与 `config.example.json` 的键）②关键代码片段 ③需要我手动填写的地方（逐项列出键名）④验证命令。不输出方案对比、不改动其他文件。
+
+### 006【C】补齐 `PLATFORM_APPID` 配置键
+> 原：PLATFORM_APPID这个你并没有写
+- 【任务】补齐第三方平台所需的 `PLATFORM_APPID` 键：加入内置兜底、示例模板，并在调用处读取。
+- 【文件】`qq_bot_relay.py` 的 `DEFAULT_CONFIG`、`answer_from_sizhi()`；`config.example.json`。
+- 【约束/输出/验收】与 `PLATFORM_API_URL`/`PLATFORM_APPKEY` 等同系列键风格一致；新增键同步 §0.4 第 3 条白名单规则。验收：填占位值启动无 KeyError，未填时给明确提示。
+
+### 007【B】安装依赖时的终端输出排错
+> 原：PS E:\Desktop\jiqiren> pip install botpy openpyxl requests L…
+- 【任务】根据 `pip install` 的完整终端输出判断安装是否成功及失败原因，给出最小修复命令。
+- 【文件】`<ROOT>/assets/启动.txt`（依赖说明）；终端工作目录统一为 `<ROOT>`。
+- 【约束/输出/验收】需补齐完整输出（原文被 `…` 截断）与 Python 版本；输出：`pip install botpy openpyxl requests` 对应的修正命令 + `python -c "import botpy,openpyxl,requests"` 验证；旧 `E:` 路径不沿用。
+
+### 008【E】第三方平台接入边界澄清
+> 原：这不是说可以接入第三方
+- 【任务】说明 `PLATFORM_API_URL`/`ENABLE_PLATFORM_API` 所代表的「第三方大模型平台」与 QQ 官方机器人 SDK（botpy）各自职责，判断当前项目是否具备接入条件。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_sizhi()`、`answer_from_deepseek()`、`get_answer()`；`config.json` 的 `LLM_BACKEND`。
+- 【约束/输出/验收】只答不改代码；输出「能力 / 配置项 / 前置条件 / 是否建议接入」四列表；验收：结论可用 `get_answer()` 的分支逻辑逐条核对。
+
+### 009【B】启动时 Traceback 排错
+> 原：[模式] QQ 官方机器人 —— 把机器人拉进群，群里 @它 即可对话 Traceback (most recent c…
+- 【任务】定位 `[模式] QQ 官方机器人` 启动后立即抛 Traceback 的根因，给最小修复。
+- 【文件】`qq_bot_relay.py` 启动段、`on_ready()`、`load_config()`；日志 `logs/botpy.log.*`；运行环境命令 `Set-Location 'c:/Users/FZY/Desktop/jiqiren_v0.1'; python qq_bot_relay.py`。
+- 【约束/输出/验收】需补齐完整 Traceback（原文被截断）、Python 版本、是否填了 `config.json`。输出：根因 + 改动点 + 复现/验证命令；验收：启动日志出现正常会话信息而非异常栈。
+
+### 010【B】botpy 接口请求异常（http.py:76）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【任务】根据 `[ERROR] (http.py:76)_handle_response` 完整日志定位失败的 QQ API 请求，判断是凭证、网络代理还是接口权限问题。
+- 【文件】`qq_bot_relay.py` 的连接配置（`SERVER_URL` / botpy `intents`）、`config.json` 的 `QQ_APPID`/`QQ_SECRET`；日志 `logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐被截断的 URL 与响应体；先给排查顺序（凭证 → 本地代理 `127.0.0.1:8787` → 接口权限 → 网络），再给最小修复；验收：重启后该 ERROR 不再复现。
+
+### 011【E】botpy 并发连接数日志解读
+> 原：[INFO] (connection.py:60)multi_run [botpy] 最大并发连接数: 1, 启动会话数…
+- 【任务】解释 `最大并发连接数: 1, 启动会话数` 这行 INFO 的含义，判断是否影响多群收发。
+- 【文件】`qq_bot_relay.py` 的 `on_ready()` 与多群配置 `groups.json`、`assets/bot_openids.json`。
+- 【约束/输出/验收】只答不改代码；输出结论 + 与「两个群都要主动发消息」的关系说明；验收：能对照 `groups.json` 的群数量说明是否会漏发。
+
+### 012【E】兜底/拒答场景盘点
+> 原：他现在在什么样的情况下会回答不出来，比如某些尖锐的问题
+- 【任务】盘点小忺当前「答不出来或给兜底回复」的全部触发条件，重点说明尖锐/敏感提问的表现。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、`answer_from_xlsx()`、`_censor()`、`_load_banned()`、`_rate_ok()`；`assets/banned_words.json`、`assets/聊天机器人问答库.xlsx`。
+- 【约束/输出/验收】只答不改代码；输出「触发条件 / 代码位置 / 用户看到的回复 / 是否可配置」表格；验收：每条都能在指定函数中定位到分支。
+
+### 013【F】优化「第 2 项」+ 发图片机器人方案
+> 原：帮我优化2，且要一个能发图片的机器人的话要怎么办
+- 【规范化】承接上一轮：①明确「2」指代的是上一轮方案清单里的**第 2 项**（若不相同请指出）；②优化该项的回复质量；③给出「机器人能主动发图片」的最小实现方案。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`/`answer_from_xlsx()`（优化项）、`_reply_with_media()`/`_send_static_media()`/`_fetch_and_save()`（发图）；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】两件事分开交付，各自给改动清单与验证命令；验收：本地库命中率提升且 `@小忺 /图` 能发出 `images/` 中图片。
+
+### 014【A】对话指令与快捷服务
+> 原：暂时搁置这个，我的QQ机器人如何弄对话指令和快捷服务
+- 【任务】为小忺实现一套 `/` 指令体系与快捷服务（至少：帮助、天气、抽签/骰子、查询），并给出新增指令的标准写法。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS` 字典、`handle_command()`、`_cmd_help()`、各 `_cmd_*`；`assets/启动.txt`（用法说明）。
+- 【约束/输出/验收】新增命令 = 写 `_cmd_xxx` + 注册进 `COMMANDS` + 补 `/help`；群聊与私聊双入口都能触发。验收：编译自检通过，`@小忺 /菜单` 列出全部指令且逐条可触发。
+
+### 015【F】「这种呢」的明确化
+> 原：这种呢
+- 【规范化】承接上一轮：把「这种」替换为**具体对象名**（如某个指令示例 / 某段配置 / 某张截图编号），并写明要我做什么（判断可行性 / 实现 / 对比）。
+- 【输出/验收】需补齐：①对象原文或文件路径 ②期望动作 ③验收标准。未补齐前只输出「需确认的问题清单」，不改代码。
+
+### 016【E】两种回复路径的词元消耗对比
+> 原：是不是一个消耗词元一个不消耗
+- 【任务】对比「本地 QA 库 / 固定话术」与「云端大模型」两条回复路径是否消耗词元，说明计费与统计口径。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、`answer_from_xlsx()`、`load_usage()`/`save_usage()`；`data/usage.json`、`assets/聊天机器人问答库.xlsx`。
+- 【约束/输出/验收】只答不改代码；输出对照表（触发条件 / 是否请求 API / 是否计入 `usage.json` / 成本）；验收：结论可用 `usage.json` 的写入点核对。
+
+### 017【A】扩充本地库 + 回复中 @ 指定群友
+> 原：那你帮我丰富多点本地库，并且实现 我让他对另一个人说话，他输出的内容变为@另一个人的
+- 【任务】①扩充本地问答库条目；②实现「让小忺对某群友说话」时，回复文本自动带上对该群友的 @。
+- 【文件】`assets/聊天机器人问答库.xlsx`（`training/expand_qa.py` 幂等追加）；`qq_bot_relay.py` 的 `answer_from_xlsx()`、`get_answer()`、`_reply()`、`_mentions_of()`；`assets/members.json`（群友名/openid）。
+- 【约束/输出/验收】@ 用 QQ 消息规范占位符，不得把 openid 写死；两件事分别给改动清单。验收：`@小忺 跟薄荷奶绿说早安` 的回复中含对目标群友的 @，且本地问答命中率提升。
+
+### 018【A】词元上限熔断
+> 原：设置超出现有词元总量就不再调用API防止我欠费
+- 【任务】实现词元预算熔断：当日累计估算用量达到上限后，停止调用云端大模型，自动回退本地回复。
+- 【文件】`qq_bot_relay.py` 的 `load_usage()`/`save_usage()`、`get_answer()`、`answer_from_deepseek()`/`answer_from_llm()`；`data/usage.json`；`config.json` 新增上限键。
+- 【约束/输出/验收】计数在请求前按保守估算预扣（见 022）；新增配置键同步 `DEFAULT_CONFIG` 白名单；每日 0 点重置（见 109）。验收：模拟用量超限时 `get_answer()` 走本地分支且不再产生 API 请求。
+
+### 019【C】由 `usage.json` 反推上限该填多少
+> 原：看 usage.json 里 tokens 涨速，再反推你该填多少上限，在哪里
+- 【任务】读取 `data/usage.json` 的历史用量，按涨速估算日消耗，给出建议上限值及填写位置。
+- 【文件】`data/usage.json`；`config.json` 的上限键；`qq_bot_relay.py` 的 `load_usage()`、`DEFAULT_CONFIG`。
+- 【约束/输出/验收】输出：近几日用量表 + 建议值 + 精确到「文件 + 键名」的填写位置；不回显任何密钥。验收：填入后熔断逻辑按该值触发。
+
+### 020【B】群聊正常、私聊无响应
+> 原：为什么只能群里里有用，单独聊天没反应
+- 【任务】定位私聊（c2c）消息完全无响应的根因并最小修复。
+- 【文件】`qq_bot_relay.py` 的 `on_c2c_message_create()`、`on_ready()` 的 intents、`_reply()`；`config.json` 的 QQ 权限配置；`logs/botpy.log.*`。
+- 【约束/输出/验收】需附完整私聊日志与是否开启 c2c 权限；先根因后修复，不改群聊逻辑。验收：私聊发「小忺你好」能收到回复，群聊行为不变。
+
+### 021【B】用量统计没有增长
+> 原：我刚才用了但是usage里面没有涨
+- 【任务】排查调用过大模型但 `data/usage.json` 未增长的原因。
+- 【文件】`qq_bot_relay.py` 的 `save_usage()`/调用点、`get_answer()` 的分支顺序、`answer_from_xlsx()`；`data/usage.json`；`config.json` 的 `LLM_BACKEND`。
+- 【约束/输出/验收】需说明刚才走的是本地库还是云端；输出根因（命中本地兜底 / 统计点遗漏 / 文件被忽略未落盘）+ 修复；验收：发一条必走大模型的消息后 `usage.json` 数值增加。
+
+### 022【A】词元估算改为保守高估
+> 原：估值应大于实际值，不然超出哪怕一点词元也可能收费
+- 【任务】把调用前的词元估算改为「宁可高估不可低估」的保守策略，确保触发熔断先于真实超额。
+- 【文件】`qq_bot_relay.py` 的用量估算与 `save_usage()` 调用点、熔断判断（018 引入）；`data/usage.json`。
+- 【约束/输出/验收】给出估算公式（输入字符数换算 + 预期输出上限 + 安全系数）与系数配置位置；验收：构造边界用例，估算值 ≥ 实际返回 usage 的 tokens。
+
+### 023【E】HTTPS 网页功能可行性
+> 原：HTTPS网页功能呢
+- 【任务】说明在当前 QQ 官方机器人架构下提供 HTTPS 网页（后台页/回调页）的可行方式与限制。
+- 【文件】`qq_bot_relay.py` 的 `_web_search()`/`_web_fetch()`、`SERVER_URL` 本地代理；`config.json`；`assets/启动.txt`。
+- 【约束/输出/验收】只答不改代码；输出「方案 / 需要的组件 / 与现有代码的关系 / 风险」表格；验收：明确指出哪些能力已有（联网抓取）、哪些需新增服务。
+
+### 024【E】值得做的指令功能清单
+> 原：有什么比较好的功能实现吗 发送指令
+- 【任务】结合本项目已有能力，给出一批适合用 `/` 指令实现的功能建议并按性价比排序。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`_cmd_help()`；`assets/idioms.txt`、`assets/kaomoji.json`、`assets/聊天机器人问答库.xlsx`。
+- 【约束/输出/验收】只答不改代码；输出「指令 / 依赖的现有函数或文件 / 实现成本 / 群友参与度」表格，标注哪些是纯本地零词元。
+
+### 025【A】群友可参与的小游戏指令
+> 原：还有什么好玩的小游戏能用指令实现群友参与
+- 【任务】实现 2–3 个群友可共同参与的小游戏指令（如骰子比大小、成语接龙、抽签），含多人状态与结果播报。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`handle_command()`、`_cmd_*`；`assets/idioms.txt`（成语接龙）；状态落 `games.json`。
+- 【约束/输出/验收】同一群多轮状态不串群、@ 触发与名字触发都可用；纯本地实现不消耗词元。验收：`@小忺 /骰子`、`/成语 一心一意` 等指令逐条实测通过。
+
+### 026【A】「群友老婆」类娱乐指令
+> 原：群友老婆这种呢
+- 【任务】实现「随机分配群友老婆」类娱乐指令，从群成员中随机配对并给出趣味播报。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`_cmd_*`、`_get_member_name()`；`assets/members.json`、`groups.json`。
+- 【约束/输出/验收】内容健康、可被 `assets/banned_words.json` 过滤；不泄露 openid；每日/每群有冷却避免刷屏。验收：指令返回的昵称来自真实群成员档案。
+
+### 027【F】锁定本轮实现范围
+> 原：我现在只做这几个先
+- 【规范化】承接上一轮：本轮**只实现**上一轮清单中我明确点名的功能（请逐项列出名称），其余建议一律不实现、不写入代码。
+- 【输出/验收】先回显「本轮范围清单」等我确认，再动手；交付时只含范围内改动 + 每个功能的验证命令，不夹带优化建议。
+
+### 028【F】「实现一下这个」的对象明确化
+> 原：实现一下这个
+- 【规范化】承接上一轮：实现对象是上一条消息中描述的**具体功能**（请写出功能名与验收现象），范围仅限该功能涉及的文件。
+- 【输出/验收】需补齐：功能名、触发方式（指令/自然语言）、期望回复、验收命令；未补齐前不改动代码。
+
+### 029【B】天气返回北京而非本地
+> 原：获取天气获取到的是北京的而非本地
+- 【任务】定位天气指令固定返回北京的根因，改为可配置城市并说明默认值来源。
+- 【文件】`qq_bot_relay.py` 的天气指令 `_cmd_*`、`_web_fetch()`；`config.json` 的城市键；`weather.json`（若存在）。
+- 【约束/输出/验收】新增配置键同步 `DEFAULT_CONFIG` 与 `config.example.json`；输出根因 + 改动 + 配置示例（城市用占位）。验收：`@小忺 /天气` 返回配置城市，未配置时明确提示而非默认北京。
+
+### 030【A】温柔有希望的安慰回复
+> 原：做一下这个的回复，随机的，温柔又有希望的安慰用户，可以有亲切的称呼，可以用emoji但是不要过于杂乱，不要有过多符号，但…
+- 【任务】实现「安慰」场景的随机回复池：温柔、有希望、可带亲切称呼，emoji 少量、符号克制、单条不超过 2 句。
+- 【文件】`qq_bot_relay.py` 的 `_NATURAL_RULES`/`get_answer()` 的情绪分支；语料可放 `assets/kaomoji.json` 或新增 `assets/comfort.txt`（需指明）。
+- 【约束/输出/验收】需补齐被 `…` 截断的要求原文；纯本地随机、零词元、不重复连发；不违反人设 `assets/persona.json`。验收：连续 10 次触发不重复且符合语气约束。
+
+### 031【D】爬取 kaomojis.jp 颜文字并按情绪归类
+> 原：https://kaomojis.jp/zh爬取这个网页的颜文字，并归类情绪用于各种相关回复当中。存单独文档
+- 【任务】抓取 `https://kaomojis.jp/zh` 的颜文字，按情绪分组存入独立文件，并接入回复逻辑。
+- 【文件】`training/scrape_kaomoji.py`（爬虫脚本）、`assets/kaomoji.json`（输出）；接入点 `qq_bot_relay.py` 的 `get_answer()`/`_NATURAL_RULES`；情绪标签参考 `assets/emotion_labels.json`。
+- 【约束/输出/验收】低频请求、失败可重跑不重复写入；输出文件为 JSON 且注明来源与抓取时间；不改 `persona.json`。验收：`assets/kaomoji.json` 分组非空，回复时能按情绪随机取一条。
+
+### 032【D】同上（重复提问，合并执行）
+> 原：https://kaomojis.jp/zh爬取这个网页的颜文字，并归类情绪用于各种相关回复当中。存单独文档
+- 【规范化】与 031 完全重复，**不重复执行**；直接引用 031 的提示词并追加：若已生成 `assets/kaomoji.json`，本次只做「校验分组完整性 + 补充缺失情绪」。
+- 【输出/验收】输出差异报告（新增/已存在/失败条目）与一次抓取命令；验收：`assets/kaomoji.json` 可被正常加载且无重复项。
+
+### 033【D】同上（第三次重复，转验收）
+> 原：https://kaomojis.jp/zh爬取这个网页的颜文字，并归类情绪用于各种相关回复当中。存单独文档
+- 【规范化】第三次重复，不再抓取；改为验收 031 的产出。
+- 【输出/验收】检查 `assets/kaomoji.json` 的分组数量、非法字符、编码；给出「在群聊发一句难过的话应命中对应情绪颜文字」的验证步骤；不改动爬虫代码。
+
+### 034【B】群聊里抽不到随机颜文字
+> 原：在群聊用不了抽随机颜文字
+- 【任务】定位群聊场景随机颜文字不生效的根因（指令未注册 / 只在私聊挂载 / 占位符被过滤 / 文件未加载）并修复。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`handle_command()`、`on_group_message_create()`、`parse_group_content()`；`assets/kaomoji.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需附群聊日志原文；群聊与私聊双入口都要验证。验收：`@小忺 /颜文字 开心` 在群内返回对应分组的一条颜文字。
+
+### 035【D】截图类输入的规范化
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】原引用是本机临时截图路径，AI 无法读取。请重新粘贴图片本体，或把图片另存到 `<ROOT>/images/` 后用相对路径 `images/xxx.png` 引用，并写明「这张图要我判断/修复什么」。
+- 【输出/验收】需补齐：①图片本体 ②问题描述 ③期望结果；未补齐前只输出「需确认的信息清单」，不做改动。
+
+## 2. 逐条规范化（036–070 · 主动消息、定时道安、安全、图片能力）
+
+### 036【E】机器人能否主动发消息
+> 原：能否让机器人主动发消息
+- 【任务】说明 QQ 官方机器人在当前 botpy 架构下主动发消息的能力边界（是否需要被 @、是否有时间窗、群与私聊差异），并给出实现路径。
+- 【文件】`qq_bot_relay.py` 的 `_push_one()`/`_handle_push()`、`on_ready()`；`groups.json`、`config.json` 的主动推送相关键；`MEMORY.md` §0。
+- 【约束/输出/验收】只答不改代码；输出「场景 / 是否可主动发 / 依赖条件 / 代码落点」表格；验收：结论能与 `_push_one()` 的调用条件逐条对应。
+
+### 037【A】定时早安 / 晚安主动问候
+> 原：每日晚安/早安(定时（如 23:00 / 08:00）向群或互动过的用户主动发一句问候 + 颜文字)；未开通/不确定(先…
+- 【任务】实现定时道安：按配置时间向目标群主动发一句问候并附带颜文字；对"未开通/不确定"的能力先做可用性检测再降级。
+- 【文件】`qq_bot_relay.py` 的 `_greet_scheduler()`、`_greet_text()`、`_push_one()`；`groups.json`（目标群）、`assets/kaomoji.json`；配置文件 `assets/proactive_config.json` 或 `config.json`（明确选定一个）。
+- 【约束/输出/验收】需补齐被 `…` 截断的原文；定时器只启一份、多群逐个发且失败不影响其他群；新增键同步兜底与白名单。验收：把时间临时设为当前分钟，群里收到一条问候 + 颜文字且日志有 `[定时]` 记录。
+
+### 038【B】启动阶段 Traceback 排错
+> 原：Traceback (most recent call last): File "E:\Miniconda3\Lib\s…
+- 【任务】根据完整栈定位启动异常（第三方库内部还是项目代码），给最小修复。
+- 【文件】`qq_bot_relay.py` 启动段；`logs/botpy.log.*`；工作目录 `<ROOT>`。
+- 【约束/输出/验收】需补齐完整 Traceback、Python/依赖版本；栈中 `E:\Miniconda3\...` 为系统库路径，只作线索不改。输出：根因 + 改动文件 + `python qq_bot_relay.py` 验证；验收：启动无异常栈。
+
+### 039【C】四个时段的道安与词汇表情
+> 原：有了，那设置在8点，12点，16点，23点分别发送早安，午安，下午好，晚安。可丰富道安词汇和表情。
+- 【任务】把定时道安配置为 08:00 早安 / 12:00 午安 / 16:00 下午好 / 23:00 晚安，并扩充各时段问候文案与颜文字池。
+- 【文件】`qq_bot_relay.py` 的 `_greet_scheduler()`、`_greet_text()`；`assets/kaomoji.json`；`assets/proactive_config.json`（时间配置）。
+- 【约束/输出/验收】同一时段随机不重复、文案克制不刷屏；配置改动说明是否需重启主程序。验收：临时把 4 个时间改成临近分钟，逐条收到对应问候且文案不同。
+
+### 040【C】重复确认（转验收）
+> 原：有了，那设置在8点，12点，16点，23点分别发送早安，午安，下午好，晚安。可丰富道安词汇和表情。
+- 【规范化】与 039 完全重复，不重复改配置；改为验收 039。
+- 【输出/验收】输出：当前生效的 4 个时间点及对应文案来源、颜文字池条数、日志 `[定时] 已启用定时道安：…` 截图位置；如与实际不符再定位差异。
+
+### 041【A】安全防护与违禁词体系
+> 原：现在做安全防护之类的，还有用户和机器人违禁词等
+- 【任务】建立双向安全防线：用户消息违禁词拦截、机器人输出内容过滤、限流与异常输入防护。
+- 【文件】`qq_bot_relay.py` 的 `_load_banned()`、`_censor()`、`_rate_ok()`、`_log_security()`、`get_answer()`；`assets/banned_words.json`（`user_block` / `reply_filter`）；日志 `logs/security.log`。
+- 【约束/输出/验收】不改变正常聊天体验；拦截事件可审计；过滤规则从文件读取而非硬编码。验收：构造违禁词输入被拦截、输出含敏感词被替换，且 `security.log` 有记录。
+
+### 042【A】拦截事件独立日志 + 人设化自我介绍
+> 原：把「拦截事件」单独落一个 security.log 文件，和需要做该机器人的人设和自我介绍。主人是远旅！温柔喜欢聊天，能…
+- 【任务】①把所有拦截事件单独写入 `logs/security.log`；②建立机器人人设与「你是谁」类问题的统一自我介绍（主人远旅、温柔爱聊天等）。
+- 【文件】`qq_bot_relay.py` 的 `_log_security()`、`_censor()`、`build_persona_prompt()`、`get_answer()`；`assets/persona.json`（新建/扩充）；`logs/security.log`。
+- 【约束/输出/验收】需补齐被 `…` 截断的人设描述原文；人设放 JSON 以便热更新，不写死在代码；日志不记录消息全文以外的隐私。验收：触发拦截后 `logs/security.log` 新增一行；`@小忺 你是谁` 返回人设统一回复且改 `persona.json` 后立即生效。
+
+### 043【C】人设名称与爱好写入
+> 原：机器人的名字是忺，可以叫他小忺，他是喜欢玩异环这个游戏。
+- 【任务】把名字「忺 / 小忺」与「喜欢玩异环」写入人设，并同步名字触发词。
+- 【文件】`assets/persona.json` 的身份/性格段、`qq_bot_relay.py` 的 `_BOT_NAMES` 常量、`build_persona_prompt()`；`assets/persona.base.json`（基线同步）。
+- 【约束/输出/验收】名字用于「不用 @ 也能回复」的触发（见 152）；改 JSON 后无需重启。验收：`@小忺 你是谁` 与「小忺你好」都能得到符合人设的回复。
+
+### 044【C】两个群都要主动推送
+> 原：目前有两个群，都要主动发消息
+- 【任务】确认主动道安/接话会覆盖配置的全部群，不漏群、不跨群串上下文。
+- 【文件】`groups.json`（目标群列表）、`qq_bot_relay.py` 的 `_push_one()`/`_greet_scheduler()`、`_bot_openids` 加载；`assets/bot_openids.json`。
+- 【约束/输出/验收】不把群 openid 硬编码进代码或提示词；输出配置示例（占位符）+ 逐群发送逻辑说明。验收：临时触发一次定时推送，两群各收到一条且内容不串。
+
+### 045【A】让小忺像真人一样互动
+> 原：如何让忺跟真人一样和群友互动
+- 【任务】给出并实施提升「活人感」的最小方案：自然接话、称呼群友、适度长短与留白、跟随话题而非模板回复。
+- 【文件】`qq_bot_relay.py` 的 `_NATURAL_RULES`、`get_answer()`、`on_group_message_create()` 的主动接话分支、`_get_member_name()`；`assets/persona.json`、`assets/网络热梗精选合集.txt`。
+- 【约束/输出/验收】不做大重构、不逐句调用大模型（词元预算）；输出「改动点 / 预期体感 / 词元成本」表格 + 实现。验收：群内连续 10 条闲聊，回复不重复模板且能正确称呼发言人。
+
+### 046【A】按时间持续推送 + 拟人思考延迟
+> 原：那能否利用时间让机器人一直推送消息，且有人的思考时间，来发送消息和群友聊天
+- 【任务】实现「按时间驱动」的主动聊天：随机间隔 + 拟人思考延迟后再发送，避免机械匀速刷屏。
+- 【文件】`qq_bot_relay.py` 的 `load_proactive_config()`、`_proactive_levels()`、`on_group_message_create()` 主动分支、`_push_one()`；`assets/proactive_config.json`（间隔/冷却参数）。
+- 【约束/输出/验收】必须有冷却与静默时段，纯表情/空消息不触发（见 `MEMORY.md` §1 L）；参数可在配置文件调。验收：设定短间隔实测，消息间隔带随机抖动且深夜不推送。
+
+### 047【A】输出图片能力
+> 原：输出图片的功能
+- 【任务】实现机器人回复中携带图片（本地图库随机/指定图），覆盖群聊与私聊。
+- 【文件】`qq_bot_relay.py` 的 `_reply_with_media()`/`_send_static_media()`、`_fetch_image_data_url()`、`get_file_info` 相关调用；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】走 QQ 富媒体 `file_info`/`msg_type=7` 流程，失败自动回退纯文字；图片路径相对 `<ROOT>`。验收：`@小忺 /图` 在群聊成功发图，私聊同样可用。
+
+### 048【D】群聊富媒体上传接口文档
+> 原：群聊富媒体上传 上传图片/视频/语音到群聊，返回 file_info 用于发送消息接口的 media 字段。 srv_s…
+- 【任务】阅读粘贴的「群聊富媒体上传」接口文档全文，提炼出上传 → 取 `file_info` → 发消息的调用链，并对照本项目现有实现。
+- 【文件】`qq_bot_relay.py` 中 `_get_file_info()`/`_send_voice()`/`_reply_with_media()`；`config.json` 的 `SERVER_URL`；文档建议存 `<ROOT>/prompts/` 备查（需确认）。
+- 【约束/输出/验收】资料被 `…` 截断时先列出需补齐字段（接口地址、参数、返回结构）；未确认前不改线上代码。输出：接口对照表 + 本项目已实现/缺失部分。
+
+### 049【D】重复文档（转差异核对）
+> 原：群聊富媒体上传 上传图片/视频/语音到群聊，返回 file_info 用于发送消息接口的 media 字段。 srv_s…
+- 【规范化】与 048 重复，不重复解析；改为核对 048 的对照表与 `qq_bot_relay.py` 中富媒体实现是否一致。
+- 【输出/验收】输出差异清单（已实现 / 参数不符 / 缺失）；验收：每条差异能定位到具体函数名，不改动未确认的接口地址。
+
+### 050【E】能否批量上传富媒体
+> 原：不能批量上传吗
+- 【任务】判断 QQ 群聊富媒体上传接口是否支持一次上传多文件，若不支持给出批量场景的替代实现。
+- 【文件】`qq_bot_relay.py` 的 `_get_file_info()`/`_fetch_and_save()`；`config.json` 的 `IMAGE_LIB`/`EMOTICON_LIB`；`images/`。
+- 【约束/输出/验收】只答不改代码；输出「结论 / 依据 / 替代方案（并发/串行+缓存） / 风险」；验收：替代方案不突破接口频率限制。
+
+### 051【A】回复时自动带图
+> 原：这种怎么让机器人回复的时候带有图片
+- 【任务】实现「文字回复 + 图片」的组合回复，并说明触发规则（关键词 / 随机概率 / 指令）。
+- 【文件】`qq_bot_relay.py` 的 `_reply_with_possible_image()`、`_wants_image()`、`_send_static_media()`、`get_answer()`；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】主动接话不自动配图（见 `MEMORY.md` §1 D）；输出触发规则配置位置。验收：`@小忺 来张图` 返回文字+图片，主动接话不凭空发图。
+
+### 052【A】骰子指令带点数面图片，其他指令类推
+> 原：让投骰子时带有对应的骰子数字面图片，其他指令类似
+- 【任务】为 `/骰子` 指令按结果附带对应点数图片，并抽象出「指令结果 → 图片」的通用映射以便其他指令复用。
+- 【文件】`qq_bot_relay.py` 的 `_cmd_*`（骰子）、`_send_static_media()`；`images/`（点数图命名规范）、`config.json` 的 `IMAGE_LIB`；`assets/启动.txt` 说明。
+- 【约束/输出/验收】图片缺失时降级为纯文字；映射表可配置不写死路径。验收：`/骰子` 结果 1–6 分别对应正确图片，另选一个指令复用映射成功。
+
+### 053【B】运行期 Traceback
+> 原：Traceback (most recent call last): File "E:\Miniconda3\Lib\s…
+- 【任务】按完整栈定位运行期异常，判断是依赖库、网络还是本项目代码问题。
+- 【文件】`qq_bot_relay.py`（按栈顶函数定位）、`logs/botpy.log.*`、`<ROOT>` 下的启动命令。
+- 【约束/输出/验收】需补齐完整栈与触发时的用户消息；先根因后最小修复，禁止全局 try/except 掩盖。验收：复现同一消息不再抛栈。
+
+### 054【B】botpy 接口请求异常（重复出现）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【任务】与 010 同类但属新一次复现，需结合本次日志定位是否为同一根因，并给出持久修复而非重启了事。
+- 【文件】`qq_bot_relay.py` 的连接/重连逻辑、`SERVER_URL`；`config.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐本次完整 ERROR 行与响应体；输出「是否同一根因 / 触发频率 / 修复与重试策略」；验收：连续运行 30 分钟不再出现该 ERROR。
+
+### 055【D】贴吧图片爬取源
+> 原：从https://tieba.baidu.com/f?kw=%E5%BC%82%E7%8E%AF&fr=frs爬取图片上…
+- 【任务】评估把百度贴吧「异环吧」作为图片来源的可行性，给出爬取与落库方案。
+- 【文件】`qq_bot_relay.py` 的图片爬取函数（`crawl_images()` 系列）；`images/`；`config.json` 的 `IMAGE_LIB`。
+- 【约束/输出/验收】需补齐被 `…` 截断的需求；说明反爬/图标类低质图风险（后续 062 已因此弃用）；输出：可行性结论 + 最小实现 + 图片质量过滤规则；验收：抓到的图非空且非站点图标。
+
+### 056【A】对话中偶尔自动配相关图（非指令）
+> 原：我就要我跟机器人对话，他能偶尔发一张爬取的图片给我相关的，而不是我用指令直接爬取
+- 【任务】实现「自然对话中按话题关键词、低概率自动配一张相关图片」，不依赖用户显式 `/图` 指令。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、`_reply_with_possible_image()`、`_crawl_keyword_image()`、`core/topic_ner.py` 的 `extract_topic()`；`config.json` 的 `IMAGE_LIB` 与概率键。
+- 【约束/输出/验收】概率可配、同一话题不连发同图、主动接话分支不配图；优先本地图库，抓取失败静默降级。验收：连续聊「异环角色」10 句，偶发配图且内容与话题相关。
+
+### 057【B】接口请求异常（第三次复现）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【任务】汇总 010/054/057 三次同类 ERROR，判断是否需统一加请求重试与退避，而非逐次手工重启。
+- 【文件】`qq_bot_relay.py` 的 botpy 请求封装/重连逻辑；`logs/botpy.log.*`；`config.json` 的 `SERVER_URL`。
+- 【约束/输出/验收】需补齐三次完整日志；输出：共性根因 + 重试/退避实现 + 日志降噪建议；验收：断网恢复后自动重连成功。
+
+### 058【B】启动输出异常
+> 原：启动变成这样了
+- 【任务】根据完整启动输出判断当前处于「正常启动 / 配置缺失 / 连接失败 / 旧代码在跑」哪种状态。
+- 【文件】`qq_bot_relay.py` 启动段与 `[配置] 已读取`、`[NLP]`、`[定时]` 等日志前缀；`config.json`；`logs/botpy.log.*`；`MEMORY.md` §6 排错顺序。
+- 【约束/输出/验收】需附完整启动输出（原文未粘贴）；输出：状态判断 + 下一步最小操作；验收：按操作后启动日志出现预期前缀。
+
+### 059【A】自动爬取用户输入相关图片 + 24 点夜深了道安
+> 原：能否到时候自动爬取用户输入相关的图片。以及加入一个夜深了晚安的主动消息，时间24点，内容格式同之前相同
+- 【任务】两件事分开做：①按用户输入话题自动爬取并回复相关图片；②新增 00:00「夜深了」道安，文案格式与现有四时段一致。
+- 【文件】`qq_bot_relay.py` 的 `_crawl_keyword_image()`、`_reply_with_possible_image()`、`_greet_scheduler()`、`_greet_text()`；`assets/proactive_config.json`（时间）；`images/`。
+- 【约束/输出/验收】两件事分别给改动清单；00:00 归当日还是次日需明确；夜间不骚扰（可被静默开关控制）。验收：话题配图生效 + 临时改时间触发「夜深了」推送格式一致。
+
+### 060【B】启动日志「[配置] 已读取」核对
+> 原：PS E:\Desktop\jiqiren> python qq_bot_relay.py [配置] 已读取 E:\De…
+- 【任务】核对启动日志中的配置读取路径是否指向当前 `<ROOT>`，排除仍在跑旧目录 `E:\Desktop\jiqiren` 的旧进程。
+- 【文件】`qq_bot_relay.py` 的 `CONFIG_FILE`/`load_config()`；`config.json`；进程命令 `Get-CimInstance Win32_Process -Filter "Name='python.exe'"`。
+- 【约束/输出/验收】需补齐完整日志；输出：实际加载路径 + 是否存在多进程 + 正确启动命令 `Set-Location 'c:/Users/FZY/Desktop/jiqiren_v0.1'; python qq_bot_relay.py`；验收：日志路径为 `<ROOT>/config.json`。
+
+### 061【E】tajiduo 站点可否爬取
+> 原：从这里能爬取到吗https://www.tajiduo.com/bbs/index.html#/home?id=2
+- 【任务】评估 `https://www.tajiduo.com/bbs/index.html#/home?id=2` 作为图片来源的可行性（是否 SPA、有无可用接口、图片直链），给出验证步骤。
+- 【文件】`qq_bot_relay.py` 的图片爬取函数；`images/`；`config.json` 的 `IMAGE_LIB`。
+- 【约束/输出/验收】只答不改代码；输出「页面形态 / 可用接口 / 直链形式 / 反爬风险 / 结论」表格；验收：结论可用一次实际请求（含返回片段）佐证。
+
+### 062【A】删除贴吧爬取，改用 tajiduo
+> 原：贴吧不要了，贴吧爬出来的都是图标一点用没有，删除所有贴吧爬取，改用tajiduo
+- 【任务】移除全部贴吧爬取代码与配置，改为 tajiduo 作为图片源，并清理已抓的贴吧低质图索引。
+- 【文件】`qq_bot_relay.py` 中贴吧相关函数与 `crawl_images()` 分发、`_tajiduo_search_items()`；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】删除要彻底（无死代码/无残留 URL），但保留其他图源；给出删除清单与替换清单。验收：全文搜索 `tieba` 无残留，tajiduo 抓取能落 `images/` 并写入索引。
+
+### 063【A】过滤截图类图片 + 爬取表情包
+> 原：能否避开一些截图类的避免影响图片美观，因为截图的一半有手机状态栏，而且也可以爬取一些表情包比如评论的
+- 【任务】在图片抓取链路加质量过滤（带手机状态栏的截图、低分辨率、站点图标），并支持抓取评论区的表情包类图片。
+- 【文件】`qq_bot_relay.py` 的 `_tajiduo_search_items()`、`_tajiduo_emoticon_urls()`、`_fetch_and_save()`、`_add_to_emoticon_lib()`；`config.json` 的 `IMAGE_LIB`/`EMOTICON_LIB`；`images/emoticons/`。
+- 【约束/输出/验收】过滤规则可配置（尺寸比例/关键词）；表情包单独入 `EMOTICON_LIB`。验收：抓 20 张图，人工确认无状态栏截图且 `images/emoticons/` 有新增。
+
+### 064【A】拍卖类图片隔离
+> 原：也屏蔽这种类型的，分类为拍卖，只有用户带了拍卖相关的才会带这种图片
+- 【任务】把「拍卖」类图片从通用图池隔离到独立分类，仅当用户输入命中拍卖关键词时才允许发送。
+- 【文件】`qq_bot_relay.py` 的 `crawl_auction_images()`、`_wants_image()`/`_reply_with_possible_image()`；`config.json` 的 `AUCTION_LIB`；`images/auction/`。
+- 【约束/输出/验收】关键词表可配置；默认不带拍卖图。验收：聊「拍卖」时出现该类图，普通聊天 20 次不出现。
+
+### 065【A】角色列表类图片隔离
+> 原：这种归类为角色列表，只有聊到配队时才有
+- 【任务】把「角色列表 / 名册」类图片独立分类，仅在用户聊到配队、阵容时发送。
+- 【文件】`qq_bot_relay.py` 的 `crawl_roster_images()`、`_wants_image()`；`config.json` 的 `ROSTER_LIB`；`images/roster/`。
+- 【约束/输出/验收】与 064 的分类机制复用同一套「关键词 → 图库」映射；验收：聊「配队」命中，普通聊天不出现名册图。
+
+### 066【B】接口异常（第四次）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【任务】按 057 的汇总结论执行统一重试/退避修复，并用本次日志验证是否收敛。
+- 【文件】`qq_bot_relay.py` 的请求封装；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整日志；若 057 未实现，则本条只输出「前置任务未完成的说明」不重复造轮子；验收：同类 ERROR 频率下降。
+
+### 067【B】接口异常（第五次）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【规范化】重复日志，合并到 057/066 的统一排错任务；本条只做「检查修复是否已部署」。
+- 【输出/验收】核对当前进程是否为改后代码（看日志新前缀）、ERROR 是否仍出现；输出结论与下一步（重启 / 回滚），不重复改代码。
+
+### 068【A】暂停本地异环角色文档 + 「你是谁」统一回复
+> 原：暂停本地的异环角色资料文档_完整版使用，并且拦截所有问机器人是谁的问题，所有要输出我是谁的都输出人设相关的统一回复我给的…
+- 【任务】①停用本地「异环角色资料文档_完整版」作为知识源；②所有询问「你是谁/自我介绍」的请求统一走人设回复。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、`build_persona_prompt()`、本地文档加载处；`assets/persona.json`；`config.json` 的知识库开关。
+- 【约束/输出/验收】需补齐被 `…` 截断的统一回复原文；拦截要在大模型调用之前（省词元），且不能误伤「你是谁的老婆」类玩笑（可列白名单）。验收：`@小忺 你是谁` 返回统一回复，日志显示未请求大模型。
+
+### 069【C】道安补齐 24 点夜深了等项
+> 原：[定时] 已启用定时道安：8 点早安 / 12 点午安 / 16 点下午好 / 23 点晚安这里还有24点夜深了吧，并且…
+- 【任务】核对启动日志中的定时道安清单，补齐 00:00「夜深了」并修正日志文案；其余被 `…` 截断的诉求需补齐后再处理。
+- 【文件】`qq_bot_relay.py` 的 `_greet_scheduler()`、`_greet_text()`、`_push_one()`；`assets/proactive_config.json`。
+- 【约束/输出/验收】先回显「已理解的时间表」再改；输出需补齐的信息清单（截断部分）。验收：启动日志列出全部时段且临时触发 00:00 推送成功。
+
+### 070【B】关掉知识库仍输出角色文档 + 夜深了改 1 点
+> 原：为什么我关了sizhi的异环知识库也关了本地文档，但是还是会输出异环角色文档。夜深了推送时间改为1点
+- 【任务】两件事：①定位「已关闭知识库却仍输出异环角色文档」的残留来源；②把「夜深了」推送时间改为 01:00。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、人设/热梗注入（`assets/persona.json`、`assets/网络热梗精选合集.txt`、`assets/聊天机器人问答库.xlsx`）、`_greet_scheduler()`；`assets/proactive_config.json`。
+- 【约束/输出/验收】怀疑范围要逐项排除（人设示例对话、QA 库、缓存未失效）；两件事分别交付。验收：关闭开关后不再出现角色文档内容；日志显示夜深了为 01:00 触发。
+
+## 3. 逐条规范化（071–105 · 图片质量、多图源、二次元图库、接话规则）
+
+### 071【A】避免重复贴同一张图
+> 原：两次贴的都是同一张图片，没有新鲜感
+- 【任务】修复自动配图重复：加入最近已发图片去重与随机不重复策略。
+- 【文件】`qq_bot_relay.py` 的 `_reply_with_possible_image()`、`_send_static_media()`、`_fetch_and_save()`；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】按群维度记录最近 N 张，进程重启后可恢复或安全清空；纯本地不耗词元。验收：连续触发 10 次配图，不出现连续重复且尽量不重复。
+
+### 072【A】图片优先级：角色 / 表情包 / 美图 / 二创
+> 原：我要看的是角色，不是要问文档，以及设置优先爬取角色相关表情包和美图以及二创图，少爬取游戏属性，面板，道具，抽卡类的
+- 【任务】调整图片抓取与选图的优先级和过滤：优先角色相关表情包、美图、二创；抑制属性面板、道具、抽卡截图类。
+- 【文件】`qq_bot_relay.py` 的 `_crawl_keyword_image()`、`_tajiduo_search_items()`、`_tajiduo_emoticon_urls()`、`_wants_image()`；`config.json` 的 `IMAGE_LIB`/`EMOTICON_LIB`；`core/topic_ner.py` 的 `extract_topic()`。
+- 【约束/输出/验收】优先级与屏蔽词做成可配置列表，不写死在判断里；与 064/065 的分类不冲突。验收：用「角色」「配队」「抽卡」各测 10 次，统计命中类别符合优先级。
+
+### 073【B】定时推送失败：`name 'api' is not defined`
+> 原：[定时] 推送失败：name 'api' is not defined
+- 【任务】定位定时道安推送时 `api` 未定义的 NameError，给最小修复并补上防护。
+- 【文件】`qq_bot_relay.py` 的 `_push_one()`/`_push_once()`/`_greet_scheduler()` 及其调用链；`logs/botpy.log.*`；`MEMORY.md` §1 H（同类 `_vstyle` 未赋值坑）。
+- 【约束/输出/验收】先根因（变量作用域 / 缺少初始化 / 函数改名残留）后修复；定时异常不能中断后续时段。验收：临时触发该时段推送成功且日志无 NameError。
+
+### 074【C】「夜深了」时间改为 01:03
+> 原：夜深了推送改为1.03分
+- 【任务】把「夜深了」道安的推送时间设为 01:03（若原意为 1.03 分请确认），并检查与 070 的 01:00 设置不冲突。
+- 【文件】`assets/proactive_config.json`（时间表）、`qq_bot_relay.py` 的 `_greet_scheduler()`。
+- 【约束/输出/验收】只保留一个「夜深了」条目，避免重复推送；输出改动前后的时间表。验收：启动日志显示 01:03，临时触发一次成功。
+
+### 075【A】图片搜索扩展到非游戏角色话题
+> 原：看看不仅能看游戏角色其他也可以搜索爬取贴出
+- 【任务】把配图的话题范围从游戏角色扩展到任意用户输入话题，保留原有角色类优先级。
+- 【文件】`qq_bot_relay.py` 的 `_crawl_keyword_image()`、`_wants_image()`；`core/topic_ner.py`；`config.json` 的图库键。
+- 【约束/输出/验收】话题词抽取失败时不配图、不硬凑；无关话题不返回错图（与 076 联动）。验收：「猫」「风景」「原神角色」各测一次，配图与话题相关。
+
+### 076【B】配图与输入匹配度太低
+> 原：输出的两条内容都跟我的输入不相干，匹配度太低
+- 【任务】定位「回复文本 + 图片」都与用户输入无关的根因，提升语义匹配度。
+- 【文件】`qq_bot_relay.py` 的 `get_answer()`、`_reply_with_possible_image()`、`_crawl_keyword_image()`；`core/topic_ner.py` 的 `extract_topic()`；`assets/聊天机器人问答库.xlsx`（本地兜底是否抢答）。
+- 【约束/输出/验收】需附两条完整输出原文与对应输入；输出根因（关键词抽取错 / 图库串类 / 兜底回复抢答）+ 修复 + 相似度判定规则。验收：用 10 组固定输入回归，配图与文本均相关。
+
+### 077【F】「继续」的规范化
+> 原：继续
+- 【规范化】承接上一轮未完成的任务：**继续实现 076 的配图匹配度修复**（若不是，请写出任务名与编号）。
+- 【输出/验收】先回显「已完成 / 待完成」清单再继续；只做该任务剩余部分，附带回归验证命令，不引入新需求。
+
+### 078【B】定时推送后的接口异常
+> 原：[定时] 已推送 late -> 群 `<群openid已脱敏>…` [ERROR] (http.py:76)_handle_res…
+- 【任务】判断 `[定时] 已推送 late` 之后紧跟的 ERROR 是否由推送请求引起，是否影响消息实际送达。
+- 【文件】`qq_bot_relay.py` 的 `_push_one()`、`_handle_push()`；`groups.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整 ERROR 行与群 openid（用占位符）；群 openid 不写代码/提示词明文。输出：是否与推送相关 + 修复；验收：定时推送后日志无新增 ERROR 且群内收到消息。
+
+### 079【B】HTTP 请求超时告警
+> 原：[WARNING] (http.py:192)request 请求超时，请求连接: https://api.sgroup…
+- 【任务】定位 `[WARNING] (http.py:192)request 请求超时` 的具体接口与超时原因，给出超时配置/重试方案。
+- 【文件】`qq_bot_relay.py` 的请求封装与超时参数、`SERVER_URL`；`config.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整 URL 与耗时；区分「可重试的偶发超时」与「接口不可用」；验收：连续观察 30 分钟 WARNING 频率下降或明确为可忽略。
+
+### 080【A】新增米游社（原神）图源
+> 原：再加一个可爬取网站https://www.miyoushe.com/ys/，原神相关
+- 【任务】接入米游社原神板块作为新图源，与现有 tajiduo 等图源并存并按板块路由。
+- 【文件】`qq_bot_relay.py` 的 `crawl_miyoushe_images()`、`crawl_images()` 分发；`images/`；`config.json` 的 `IMAGE_LIB`。
+- 【约束/输出/验收】低频抓取、失败降级到其他图源；去重与质量过滤复用 063。验收：输入「原神角色」能命中米游社图，其他话题不误用。
+
+### 081【A】发表情 + cos 图不局限角色
+> 原：既然能爬取表情就要能发表情，这样更有活人感，而且不应该米友社只能搜角色图，还有cos图等
+- 【任务】①让回复/主动消息可发送已爬到的表情包；②米游社搜索支持 cos、二创等类别，不只角色图。
+- 【文件】`qq_bot_relay.py` 的 `_add_to_emoticon_lib()`、`_send_library_emoticon()`、`crawl_miyoushe_images()`；`config.json` 的 `EMOTICON_LIB`；`images/emoticons/`。
+- 【约束/输出/验收】表情单独发送不带文字（见 `MEMORY.md` §1 E）；类别词可配置。验收：`/表情` 或主动接话能发库内表情；搜索「cos」返回非角色立绘类图。
+
+### 082【A】`/菜单` 汇总全部指令
+> 原：把所有能用的"/"都放入/菜单中方便用户了解使用
+- 【任务】让 `/菜单`（`/help`）自动列出 `COMMANDS` 中全部可用指令及用法，避免手工维护遗漏。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`_cmd_help()`、`handle_command()`；`assets/启动.txt`。
+- 【约束/输出/验收】按功能分组、每条一行、别名合并显示；新增指令自动出现在菜单。验收：菜单条数与 `COMMANDS` 键数一致，随机抽 3 条可触发。
+
+### 083【B】超时告警（重复）
+> 原：[WARNING] (http.py:192)request 请求超时，请求连接: https://api.sgroup…
+- 【规范化】与 079 同因重复，合并到 079 的超时/重试任务；本条只核对修复是否生效。
+- 【输出/验收】输出：当前超时配置值、重试次数、近期 WARNING 出现次数；若不降则补充根因分析，不重复改同一处代码。
+
+### 084【B】超时告警（第三次）
+> 原：[WARNING] (http.py:192)request 请求超时，请求连接: https://api.sgroup…
+- 【规范化】第三次重复，转为「长期观测」任务：在 `logs/` 中统计该 WARNING 的时间分布。
+- 【输出/验收】输出统计表（时段 / 次数 / 是否集中在定时推送）；据此判断是否需要限流，不改代码除非有明确结论。
+
+### 085【D】公开图片直链示例
+> 原：https://res1999.huijiwiki.com/wiki/File:Portrait-304804.webp…
+- 【任务】解析粘贴的 wiki 图片 URL，说明如何取得可直接用于 QQ 富媒体发送的**图片直链**（而非页面地址）。
+- 【文件】`qq_bot_relay.py` 的 `_fetch_image_data_url()`/`_reply_with_media()`；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】URL 被 `…` 截断需补齐；只做可行性说明 + 转换规则，不改线上配置。验收：给出一条可访问的直链并用发送函数验证。
+
+### 086【A】「加群主图」功能
+> 原：做「加群主图」
+- 【任务】实现把图片登记为「群主图」的指令/流程，供后续定向发送。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、新增 `_cmd_*`、`_add_to_image_lib()`；`config.json` 的 `IMAGE_LIB`/`OWNER_IMAGES`；`images/`。
+- 【约束/输出/验收】需确认「群主图」定义（群主发的图 / 群主专用图库）；只登记不改动用户原文件；路径相对 `<ROOT>`。验收：登记后按指令能发出该图且重启后索引仍在。
+
+### 087【A】加远旅图、加群员图
+> 原：和加远旅图功能还有加群员图
+- 【任务】在 086 基础上扩展：主人「远旅」专属图库与按群友昵称/openid 关联的图片登记与调用。
+- 【文件】`qq_bot_relay.py` 的 `_cmd_*`、`_get_member_name()`、`_add_to_image_lib()`；`config.json` 的 `OWNER_IMAGES`/`MEMBER_IMAGES`；`assets/members.json`；`images/`。
+- 【约束/输出/验收】openid 只作内部键、不出现在提示词与回复；未登记的群友给友好提示。验收：`@小忺 远旅图` 与「@群友 图」分别能返回对应图。
+
+### 088【D】角色协议文档注入
+> 原：昔涟AI角色协议 (Cyrene_RP_Protocol_v2.0 class Cyrene: # 核心身份参数 IDE…
+- 【任务】阅读粘贴的「角色协议」全文，提炼可迁移到小忺人设的字段（身份参数、性格、说话风格、边界），输出结构化人设草案。
+- 【文件】输出目标 `assets/persona.json` / `assets/persona.base.json`（字段映射），加载逻辑 `qq_bot_relay.py` 的 `build_persona_prompt()`；原文建议存 `<ROOT>/prompts/` 备查（需确认）。
+- 【约束/输出/验收】原文被 `…` 截断需补齐；**只产出草案不直接覆盖现有人设**，避免破坏「小忺/远旅」设定。验收：草案字段能被 `build_persona_prompt()` 解析且不含第三方角色专属名。
+
+### 089【E】公网图片 URL 获取途径
+> 原：公网的图片url怎么找
+- 【任务】给出可合法、稳定获取公网图片直链的方法清单，并说明哪些适合 QQ 富媒体发送。
+- 【文件】`qq_bot_relay.py` 的 `_fetch_image_data_url()`/`_reply_with_media()`、`crawl_lolicon()`/`crawl_loliapi()`；`config.json` 的图库键。
+- 【约束/输出/验收】只答不改代码；输出「途径 / 直链形式 / 稳定性 / 版权与合规注意 / 本项目接入点」表格；验收：每条途径都能对应到一个现成函数或明确的新增点。
+
+### 090【A】文件访问隔离 + 链接转直链
+> 原：让群成员没办法访问我的电脑任何方式都不行，以及能不能把一些链接转为直链
+- 【任务】①审计所有读取本地文件的入口，确保群成员无法通过指令读取项目外文件（尤其绝对路径 / `..` 穿越）；②把网页链接转换为可发送的图片直链。
+- 【文件】`qq_bot_relay.py` 的 `_handle_import_voice()`、`_safe_path_within()`、`_VOICE_TRAIN_DIR`、各 `_cmd_*` 路径参数、`_fetch_image_data_url()`；`MEMORY.md` §1 K（只读白名单约束）。
+- 【约束/输出/验收】**硬约束**：机器人只读 `<ROOT>/assets/训练音频/` 与 `images/`，拒绝含 `\ / : ..` 的路径参数；只登记不改动用户文件。验收：穿越路径、C 盘绝对路径、跨盘符全部被拒；合法直链可发送。
+
+### 091【D】第 1 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035：本机临时路径不可读。请粘贴图片本体或存为 `<ROOT>/images/xxx.png` 后用相对路径引用，并写明这张图对应的问题与期望结果。
+- 【输出/验收】未补齐信息前只输出「需确认清单」，不改动代码。
+
+### 092【D】第 2 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035/091；若与 091 属同一问题请合并为一条，避免重复排错。
+- 【输出/验收】输出「是否与前一张重复」的判断 + 需补齐的信息清单。
+
+### 093【D】第 3 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035；按「现象 / 复现步骤 / 期望结果」三要素描述截图内容。
+- 【输出/验收】未补齐前不改动代码；补齐后再按 B 类排错模板执行。
+
+### 094【D】第 4 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035；请注明图片中需要关注的区域（日志行、配置项或界面字段）。
+- 【输出/验收】输出需确认的问题清单，不猜测截图内容。
+
+### 095【D】第 5 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035；若为连续截图请给出顺序编号与每张对应的时间点。
+- 【输出/验收】输出顺序化的「待分析材料清单」，不改动代码。
+
+### 096【D】第 6 张截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035；六张截图建议统一存到 `<ROOT>/images/` 并在一条提示词里按编号引用，避免逐张提问。
+- 【输出/验收】输出「合并后的单条排错提示词」，含全部图片相对路径；不改代码。
+
+### 097【A】补充二次元图片公网图源
+> 原：能不能加一个二次元图片的公网，现在这个外网没多少二次元图片
+- 【任务】新增一个二次元图片公网图源，解决现有图源二次元图不足的问题。
+- 【文件】`qq_bot_relay.py` 的 `crawl_lolicon()`/`crawl_loliapi()`、`crawl_images()` 分发；`config.json` 的 `IMAGE_LIB`；`images/`。
+- 【约束/输出/验收】接口需可配置、失败静默降级、遵守站点调用频率与内容合规；输出接口说明（Key 只放 `config.json`）。验收：输入二次元话题能返回新图源图片且本地索引更新。
+
+### 098【F】「做进去」的对象明确化
+> 原：做进去
+- 【规范化】承接上一轮：把 097 的「新增二次元图源」方案落地实现，范围仅限 `qq_bot_relay.py` 的图源分发与 `config.json` 图库键。
+- 【输出/验收】先回显实现范围再动手；交付改动清单 + 编译自检 + 一次真实抓图验证，不夹带其他优化。
+
+### 099【B】搜索结果串类
+> 原：你这搜索老容易混
+- 【任务】定位图片搜索把不同板块/话题的结果混在一起的根因（关键词未隔离、缓存串用、图库未按类索引），并修复。
+- 【文件】`qq_bot_relay.py` 的 `_crawl_keyword_image()`、`crawl_images()`、`_tajiduo_search_items()`、`crawl_miyoushe_images()`；`config.json` 的各类 `*_LIB`；`images/` 子目录。
+- 【约束/输出/验收】需附 2–3 组「输入 → 错误输出」实例；按板块隔离索引与缓存。验收：用固定 10 组输入回归，不再出现跨板块图片。
+
+### 100【F】「加」的对象明确化
+> 原：加
+- 【规范化】承接上一轮：把「加」替换为具体动作 + 对象（例如「为图片搜索增加二级限定词支持」，见 101）。
+- 【输出/验收】需补齐：动作、目标文件、期望效果、验收方式；未补齐前只输出确认清单，不改代码。
+
+### 101【A】图片搜索支持二级限定词
+> 原：用户可以加二级限定词
+- 【任务】让图片搜索支持「主话题 + 二级限定词」（如 `角色 cos`、`异环 表情包`），提升命中精度。
+- 【文件】`qq_bot_relay.py` 的 `_crawl_keyword_image()`、`_is_crawl_cmd()`、`core/topic_ner.py` 的 `extract_topic()`；`config.json` 的图库键。
+- 【约束/输出/验收】限定词与板块映射可配置；不传二级词时行为不变。验收：`/搜图 角色 cos` 与 `/搜图 角色` 返回不同类别结果且均可用。
+
+### 102【F】「继续」的规范化（第二次）
+> 原：继续
+- 【规范化】承接上一轮：**继续完成 101 的二级限定词实现**（若不是请写出任务编号）。
+- 【输出/验收】先列「已完成 / 待完成」，只做剩余部分；交付回归用例（有二级词 / 无二级词）与结果。
+
+### 103【A】二级限定词（重复，转验收）
+> 原：用户可以加二级限定词
+- 【规范化】与 101 重复，不重复实现；改为验收 101 的产出。
+- 【输出/验收】输出：支持的二级词列表、解析函数位置、3 组实测结果；若有缺失项再补最小修复。
+
+### 104【A】前缀决定搜索板块
+> 原：用户可以加前缀，'异环'，'原神'，来决定哪个板块
+- 【任务】实现「前缀路由」：用户输入以 `异环` / `原神` 等前缀开头时，强制走对应板块的图源与图库。
+- 【文件】`qq_bot_relay.py` 的 `crawl_images()` 分发、`_is_crawl_cmd()`、`_crawl_keyword_image()`；`config.json` 的 `IMAGE_LIB` 分类键；`images/` 子目录。
+- 【约束/输出/验收】前缀表可配置、大小写/空格容错；无前缀时按 101 的二级词逻辑。验收：`异环 角色`、`原神 cos`、`角色` 三种输入分别命中预期板块。
+
+### 105【B】群消息日志中的接话行为核查
+> 原：[群消息] 说一句"邪恶远旅" [群消息] 反了你了<faceType=1,faceId="11",ext="eyJ0Z…
+- 【任务】根据完整群消息日志核对：纯表情/占位符消息是否被误判为有内容而触发主动接话，以及昵称识别是否正确。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()`、`parse_group_content()`、`_get_member_name()`；`logs/botpy.log.*`；`MEMORY.md` §1 L（占位符剥离规则）。
+- 【约束/输出/验收】需补齐完整日志行；输出：是否误触发 + 根因 + 最小修复；验收：纯 `<faceType=…>` 消息不接话，正常文本照常接话。
+
+## 4. 逐条规范化（106–140 · 接话规则、语音 TTS、简历/毕设、训练选型）
+
+### 106【A】扩充接话规则：调戏 / 拌嘴 / 玩梗
+> 原：加接话规则(扩充 _NATURAL_RULES，让机器人对调戏/拌嘴/玩梗消息 in-character 回怼或撒娇（不…
+- 【任务】扩充 `_NATURAL_RULES`，让小忺对调戏、拌嘴、玩梗类消息以人设口吻回怼或撒娇，且不与叙事请求抢答。
+- 【文件】`qq_bot_relay.py` 的 `_NATURAL_RULES`、`_parse_narrative()`、`get_answer()`；`assets/persona.json`（说话风格）、`assets/网络热梗精选合集.txt`。
+- 【约束/输出/验收】需补齐被 `…` 截断的规则原文；固定话术必须是纯本地零词元，且不得拦截「讲个故事+情绪词」等叙事请求（见 `MEMORY.md` §1 G）。验收：拌嘴/玩梗 10 例回怼得体，讲恐怖故事仍正常完整输出。
+
+### 107【A】从「异环专属」改为通用聊天模型
+> 原：再把他弄成聊天模型而非异环专属
+- 【任务】去除回复链路中的异环专属知识/语料偏置，让小忺成为通用聊天人设，但保留 104 的前缀板块能力。
+- 【文件】`qq_bot_relay.py` 的 `build_persona_prompt()`、`get_answer()`；`assets/persona.json`、`assets/persona.base.json`、`assets/聊天机器人问答库.xlsx`、`assets/网络热梗精选合集.txt`；`config.json` 的知识库开关。
+- 【约束/输出/验收】逐项列出「仍会注入异环内容的来源」并清理；与 068 的知识库关闭保持一致。验收：聊 10 个非游戏话题不出现异环角色文档内容；聊 `异环` 前缀仍能出对应内容。
+
+### 108【C】新增 24 点「催睡觉」道安
+> 原：晚安时间加24点，可爱的催促群员们睡觉
+- 【任务】在 00:00 增加一条「可爱地催群员睡觉」的道安，与 23:00 晚安、01:03 夜深了区分文案。
+- 【文件】`qq_bot_relay.py` 的 `_greet_text()`、`_greet_scheduler()`；`assets/proactive_config.json`；`assets/kaomoji.json`。
+- 【约束/输出/验收】三个夜间时段（23:00 / 00:00 / 01:03）不重复推送、文案不雷同；需说明 00:00 归属哪一天。验收：临时触发三条，文案各自不同且符合人设。
+
+### 109【C】词元额度每日 0 点重置
+> 原：我的词元是每天0点刷新的
+- 【任务】让词元预算统计与熔断按「每日 00:00 重置」，与平台计费周期对齐。
+- 【文件】`qq_bot_relay.py` 的 `load_usage()`/`save_usage()`、018 的熔断判断；`data/usage.json`；`config.json` 的上限键。
+- 【约束/输出/验收】跨天边界（23:59→00:00）不能出现负额度或重复计数；本地时区明确为系统本地时间。验收：用模拟时间戳验证跨天重置，超限后次日自动恢复调用。
+
+### 110【E】语音输出可行性
+> 原：能不能做语音输出
+- 【任务】说明在 QQ 官方机器人里发送语音消息的技术路径与前置条件，结合本项目现有能力给方案。
+- 【文件】`qq_bot_relay.py` 的富媒体发送 `_get_file_info()`/`_reply_with_media()`、`config.json` 的 `MIMO_*`；`assets/启动.txt`。
+- 【约束/输出/验收】只答不改代码；输出「方案 / 依赖接口 / 需要新增的函数 / 成本与限制」表格；验收：结论能与现有富媒体发送链路对应。
+
+### 111【A】语音开关 + `/说` 指令
+> 原：开关+按需都做(加 /voice 开关（开启后回复同时发语音）+ /说 <文本> 指令让机器人念任意话。最灵活，推荐)；…
+- 【任务】实现两套能力：①`/voice` 总开关，开启后回复同时发语音；②`/说 <文本>` 让小忺朗读任意指定文本。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`_cmd_voice()`、`_handle_say()`、`_send_voice()`、`_maybe_speak()`；`assets/voice_config.json`（`enabled` 等键）。
+- 【约束/输出/验收】需补齐被 `…` 截断的要求；新增配置键同步 `_VOICE_CFG_FALLBACK` + load/save 白名单（`MEMORY.md` §6）；群聊与私聊双入口。验收：`/voice 开`、`/说 你好` 均生效，关闭后不再发语音。
+
+### 112【D】MiMo TTS 模型文档
+> 原：模型详解 1. mimo-v2.5-tts — 标准语音合成 将文字转换为自然流畅的语音。支持多种音色、可调节语速、多种…
+- 【任务】阅读粘贴的 MiMo TTS 模型文档全文，提炼 `mimo-v2.5-tts` / `voicedesign` / `voiceclone` 三者的能力差异与请求参数，映射到本项目实现。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`、`_make_voice_sample()`、`_load_voice_sample()`；`assets/voice_config.json`；原文建议存 `<ROOT>/prompts/` 备查。
+- 【约束/输出/验收】文档被 `…` 截断需补齐；输出「模型 / 用途 / 是否支持情绪 / 是否支持唱歌 / 本项目调用点」表格；未确认前不改线上 TTS 配置。
+
+### 113【F】「继续」的规范化（第三次）
+> 原：继续
+- 【规范化】承接上一轮：**继续完成 111 的语音开关与 `/说` 指令实现**（若不是请写出任务编号）。
+- 【输出/验收】先列「已完成 / 待完成」，只做剩余部分；验收包含编译自检、`/voice 开`、`/说 你好` 三条实测。
+
+### 114【C】清理失效图库索引
+> 原：我把多余的照片删掉了现在清理config.json中的"IMAGE_LIB"和"EMOTICON_LIB"，每次启动不再…
+- 【任务】清理 `config.json` 中指向已删除图片的 `IMAGE_LIB` / `EMOTICON_LIB` 条目，并保证启动时不再加载失效路径。
+- 【文件】`config.json`（本地私密）、`qq_bot_relay.py` 的 `load_config()`、图库加载处；`images/`、`images/emoticons/`。
+- 【约束/输出/验收】需补齐被 `…` 截断的诉求；以磁盘实际存在文件为准自动校验，缺失项跳过并打印提示而非崩溃。验收：启动日志无失效路径警告，`/图` 只发出仍存在的图片。
+
+### 115【A】菜单简洁化
+> 原：菜单简洁化，去掉不必要的
+- 【任务】精简 `/菜单` 输出：保留高频指令与别名合并，去掉调试/一次性指令，分组更清晰。
+- 【文件】`qq_bot_relay.py` 的 `_cmd_help()`、`COMMANDS`；`assets/启动.txt`。
+- 【约束/输出/验收】需明确「不必要」的判定标准（内部调试 / 重复别名 / 极少使用）；保持 082 的「自动列出」不退化。验收：菜单行数明显减少且常用指令齐全。
+
+### 116【D】OpenAI 兼容客户端示例
+> 原：# Verify it works from openai import OpenAI client = OpenAI(…
+- 【任务】阅读粘贴的 OpenAI SDK 示例全文，说明如何用它验证本项目 TTS/LLM 接口连通性。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`/`_tts_post()`、`answer_from_llm()`；`config.json` 的 `MIMO_*`/`DEEPSEEK_*`（Key 用占位符）。
+- 【约束/输出/验收】示例被 `…` 截断需补齐 `base_url`/`api_key`/`model`；验证脚本只读配置、不打印 Key。验收：给出一条能跑通的连通性检查命令及预期输出。
+
+### 117【B】TTS 返回 404
+> 原：[TTS] Mimo 返回 404: {"error":{"message":"openai_error","type"…
+- 【任务】定位 MiMo TTS 返回 404 的根因（模型名 / base_url 路径 / 接口版本 / Key 权限），给最小修复。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`/`_tts_post()`；`config.json` 的 `MIMO_API_KEY`/`MIMO_BASE_URL`/模型名；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整 404 响应体；输出「根因 / 正确请求示例（占位 Key） / 改动点」；验收：`/说 你好` 成功返回音频字节且无 404。
+
+### 118【D】TokenPAPA 接入说明
+> 原：# 连接 TokenPAPA 到 AI Agent 你已经使用 TokenPAPA,理由很简单:**一个 API Key…
+- 【任务】阅读粘贴的 TokenPAPA 接入文档全文，提炼 base_url、模型名、鉴权方式，并评估是否适合本项目。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_llm()`/`get_answer()`；`config.json` 的 `LLM_BACKEND`；原文建议存 `<ROOT>/prompts/` 备查。
+- 【约束/输出/验收】资料被 `…` 截断需补齐；**注意 121 已决定弃用 TokenPAPA**，本条只做「历史资料归档 + 对比」，不改代码。输出：文档要点 + 弃用原因对照表。
+
+### 119【C】访问令牌登记（原提问含明文，已脱敏）
+> 原：访问令牌 `<已脱敏：原文明文令牌见备份文件，建议立即轮换>`
+- 【任务】把新的 API 访问令牌写入本地私有配置供程序读取；**不要**把令牌写进代码、示例、日志、提示词或回复。
+- 【文件】`<ROOT>/config.json` 对应键（如 `MIMO_API_KEY` / `DEEPSEEK_API_KEY`，请指明是哪一个）；`qq_bot_relay.py` 的 `load_config()`/`_config_fresh()`；`config.example.json` 只保留占位符。
+- 【约束/输出/验收】原提问含明文令牌，视为已泄露，建议先在平台轮换再用新值；回答中只出现键名不出现值。验收：启动日志显示读取到该键、连通性检查通过，且全项目搜索不到令牌明文。
+
+### 120【D】OpenAI 客户端 `base_url` 片段
+> 原：from openai import OpenAI client = OpenAI( base_url="https:/…
+- 【任务】阅读粘贴的 `OpenAI(base_url=…)` 配置片段全文，确认应当填入哪个服务的地址与鉴权方式。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`/`answer_from_llm()`；`config.json` 的 `*_BASE_URL` 键。
+- 【约束/输出/验收】片段被 `…` 截断需补齐；只输出「服务 → base_url → 对应配置键」映射，不写入真实 URL 之外的密钥；验收：映射与 117 的修复结论一致。
+
+### 121【A】移除 TokenPAPA，改用官方接口
+> 原：删除所有TokenPAPA代码改用官方接口调用API
+- 【任务】彻底移除 TokenPAPA 相关代码与配置，改为直接调用模型厂商官方 OpenAI 兼容接口。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_llm()`/`get_answer()` 及所有 TokenPAPA 引用；`config.json` 的 `LLM_BACKEND`、`DEEPSEEK_*`/`MIMO_*`；`config.example.json`。
+- 【约束/输出/验收】删除要彻底（全文搜索 `TokenPAPA`/`tokenpapa` 无残留），但保留其他后端的可切换能力（见 172）；给出删除清单与替换清单。验收：编译自检通过、发一条消息走官方接口成功、`data/usage.json` 正常计数。
+
+### 122【D】MiMo-TTS 官方接口文档
+> 原：语音合成（MiMo-TTS 系列）- OpenAI API 兼容 请求地址 https://api.xiaomimimo…
+- 【任务】阅读粘贴的 MiMo-TTS 官方文档全文，整理请求地址、模型、鉴权、请求体与音频返回格式，核对本项目实现。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`/`_tts_post()`；`assets/voice_config.json`；`config.json` 的 `MIMO_*`；原文建议存 `<ROOT>/prompts/` 备查。
+- 【约束/输出/验收】文档被 `…` 截断需补齐；输出「官方字段 / 本项目字段 / 是否一致」表格；未确认前不改线上配置。验收：表格能解释 117 的 404 原因。
+
+### 123【E】音色选择方案
+> 原：音色选择
+- 【任务】说明本项目 TTS 可选音色有哪些、在哪里切换、聊天/故事/唱歌是否可分别设置。
+- 【文件】`assets/voice_config.json` 的 `voice`/`voice_sample`/`chat_style`/`sing_voice`；`qq_bot_relay.py` 的 `_tts_mimo()`、`_cmd_voice()`、`_handle_sing()`；`assets/persona.json`（音色按人设生成）。
+- 【约束/输出/验收】只答不改代码；输出「场景 / 配置项 / 命令 / 是否影响其他场景」表格；验收：与 `MEMORY.md` §1 H/J/M 的结论一致（聊天固定音色、仅故事变情绪、唱歌用预置音色）。
+
+### 124【A】音频效果处理（如「氦气」音色）
+> 原：能否加入音频输出处理的能力，比如输出"氦气"这种音色的
+- 【任务】在语音发送链路加入可选音频后处理效果（变调/氦气等），并提供开关与参数。
+- 【文件】`qq_bot_relay.py` 的 `_send_voice()`/`_push_voice()`（已有 `voice_speed` 的 ffmpeg 处理可复用）；`assets/voice_config.json` 的 `effect` 键；`MEMORY.md` §1 J（`atempo` 用法）。
+- 【约束/输出/验收】无 ffmpeg 或参数非法时安全跳过不崩溃；效果只作用于发送副本，不改样音文件。验收：`/音效 氦气` 后发语音可听出效果，关闭后恢复原音色。
+
+### 125【B】启动日志核对（第二次）
+> 原：PS E:\Desktop\jiqiren> python qq_bot_relay.py [配置] 已读取 E:\De…
+- 【任务】与 060 同类：核对启动日志路径与当前进程，排除仍在跑 `E:\Desktop\jiqiren` 旧代码。
+- 【文件】`qq_bot_relay.py` 的 `load_config()`；`config.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整日志；统一给出 `<ROOT>` 下的启动命令；验收：日志中 `[配置] 已读取` 指向 `c:/Users/FZY/Desktop/jiqiren_v0.1/config.json`。
+
+### 126【A】语音更有情感与情绪
+> 原：如何让语音更有情感和情绪
+- 【任务】给出并实施让 TTS 输出带情绪的方案，同时保证日常聊天音色恒定。
+- 【文件】`qq_bot_relay.py` 的 `_tts_mimo()`、`_choose_voice_emotion()`、`_choose_story_emotion()`；`assets/voice_config.json` 的 `chat_style`/`voice_sample`；`MEMORY.md` §1 H/J（逐句换情绪曾导致音色漂移）。
+- 【约束/输出/验收】**禁止**恢复「聊天逐句算情绪 → 每句切 voicedesign」的旧做法；情绪优先用本地关键词零词元方案。验收：故事语音有情绪变化，连续 10 句聊天音色调一致。
+
+### 127【A】讲故事自动发语音 + 情绪按文本自动选
+> 原：当用户说讲个故事的时候自动用语音来输出故事。根据用户文本智能使用对应情感输出语音而不是用户选择。
+- 【任务】实现叙事请求必发语音，且语音情绪由故事文本/用户点名情绪自动决定，无需用户手动选择。
+- 【文件】`qq_bot_relay.py` 的 `_parse_narrative()`、`_narrative_style()`、`_narrative_voice_plan()`、`_choose_story_emotion()`、`_maybe_speak()`；`assets/voice_config.json`。
+- 【约束/输出/验收】语音开着时叙事必发语音（不受 `frequency` 随机影响），失败回退文字；用户点名情绪优先于自动判断。验收：`讲个恐怖故事`/`讲个开心的故事` 分别对应神秘/开心情绪且都发语音。
+
+### 128【A】讲故事只输出故事正文
+> 原：讲故事时去除其他一切，只要故事文本
+- 【任务】清理叙事回复中的引导语、解释、emoji、前后缀，只保留故事/笑话正文。
+- 【文件】`qq_bot_relay.py` 的 `_clean_story()`、`_narrative_directive()`、`get_answer()` 的叙事分支。
+- 【约束/输出/验收】不误删故事正文里的标点与段落；语音与文字两种输出都生效。验收：`@小忺 讲个故事` 的回复与语音文本均为纯正文，无「好呀～」类前缀。
+
+### 129【E】简历项目描述写法
+> 原：我要把这个项目写上简历，给我弄一下怎么写
+- 【任务】基于本项目真实实现，产出 2–3 条简历可用的项目经历表述（STAR + 量化指标）。
+- 【文件】事实依据：`qq_bot_relay.py`、`core/`、`training/`、`auto_learn.py`、`MEMORY.md`；输出为 Markdown 文本，**不落盘、不改代码**。
+- 【约束/输出/验收】只写已实现能力（botpy 机器人、富媒体、TTS、爬虫、NLP 训练链路），未训练/未上线的不写成已完成；不出现密钥与 openid。验收：每条含动作 + 技术栈 + 可验证结果。
+
+### 130【E】可写入简历的专业术语
+> 原：我能写什么熟悉或者了解某些专业词吗
+- 【任务】按「精通 / 熟悉 / 了解」三档给出本项目能支撑的专业术语清单，并标注对应代码证据。
+- 【文件】事实依据：`core/`（多任务 BERT、意图识别、多标签情感分类、NER）、`training/`、`qq_bot_relay.py`（RAG/检索、限流、缓存）、`MEMORY.md`。
+- 【约束/输出/验收】只答不改代码；未实际训练出权重的部分只能写「了解 / 参与搭建」，不得写「精通」。输出「术语 / 档位 / 项目证据（文件路径）」表格。
+
+### 131【E】毕设详细方案与可扩展方向
+> 原：这个是我的毕设，现在根据已有项目给我一个详细方案，以及未来可能加的，我是人工智能专业的
+- 【任务】以人工智能专业毕设口径，输出一份详细方案：研究背景、系统架构、已实现模块、创新点、实验设计、未来工作。
+- 【文件】事实依据：`qq_bot_relay.py`、`core/`、`training/`、`assets/emotion_labels.json`、`emotion_labeler.py`、`MEMORY.md`；输出为 Markdown 文本，不落盘。
+- 【约束/输出/验收】已实现 / 计划实现必须分节标注；不得把「未训练权重」写成已完成实验。验收：架构图（文字描述）中每个模块能对应到具体文件路径。
+
+### 132【E】精简方案 + 聊天文本训练是否算训练 AI
+> 原：简洁成一个方案，以及我能不能把聊天文本跑一个训练，加入机器人的情绪中，这样的话也算是训练了AI吗
+- 【任务】①把 131 压缩成一页以内的方案；②从机器学习定义上回答「用聊天文本做情绪训练算不算训练 AI」，并说明本项目的训练链路怎么看。
+- 【文件】事实依据：`training/train_emotion.py`、`core/emotion_model.py`、`data/emotions.jsonl`、`assets/emotion_labels.json`、`MEMORY.md` §1 Q。
+- 【约束/输出/验收】只答不改代码；区分「微调模型权重」与「构造 prompt / 规则 / 检索库」；验收：结论能对应到 `core/models/emotion_bert.pt` 是否真实存在。
+
+### 133【E】项目技术清单（含预训练）
+> 原：你把这个项目用到的写出来就行（例如爬虫爬图片输出）包括预训练
+- 【任务】列出本项目实际使用的技术清单，含爬虫、富媒体、TTS、LLM API、NLP 与「预训练模型」相关部分。
+- 【文件】`qq_bot_relay.py`（爬虫/富媒体/LLM）、`core/`（推理）、`training/`（训练脚本）、`MEMORY.md` §1 Q（`HF_ENDPOINT` 与 bert 预训练权重）。
+- 【约束/输出/验收】只答不改代码；区分「调用预训练模型 API」与「本地加载/微调预训练权重」；输出「技术 / 用途 / 文件证据 / 是否已落地」表格。
+
+### 134【E】给老师看的一段式方案（含权重文件）
+> 原：就是我要用文本训练得到一个权重文件，这个也写出来，未来我会做，你就当以及做了，最后整理成一段长度适中的给老师看的方案
+- 【任务】整理一段长度适中、面向答辩老师的毕设方案描述，包含「文本训练产出权重文件」这一环节。
+- 【文件】事实依据：`training/train_emotion.py` → `core/models/emotion_bert.pt`、`core/emotion_model.py`、`data/emotions.jsonl`、`emotion_labeler.py`。
+- 【约束/输出/验收】**诚信约束**：原文要求「未来会做，就当已经做了」，规范写法改为「拟完成 / 计划完成」，不虚构已完成实验；输出单段 200–300 字，不落盘不改代码。
+
+### 135【E】能否加入 NLP 能力
+> 原：能否加入nlp
+- 【任务】结合项目现状说明可落地的 NLP 能力清单（意图识别、情感分类、NER、话题抽取），并标注已有/待训练。
+- 【文件】`core/`（6 个模块）、`training/`、`assets/emotion_labels.json`、`data/*.jsonl`、`MEMORY.md` §1 Q。
+- 【约束/输出/验收】只答不改代码；输出「能力 / 是否已有代码 / 是否已有权重 / 接入点」表格；验收：明确说明权重缺失时自动回退规则。
+
+### 136【A】落地前述 NLP 改造，训练暂缓
+> 原：把我所说的要加的都加进来，训练可以先不训练
+- 【任务】把 131–135 中列出的 NLP 相关代码/接口/数据链路全部落地，但**不执行模型训练**，权重保持缺失时的规则回退。
+- 【文件】`core/`（推理与模型定义）、`training/`（数据构造脚本）、`qq_bot_relay.py` 的接入点、`assets/emotion_labels.json`、`emotion_labeler.py`。
+- 【约束/输出/验收】先回显「本轮范围清单」确认；不生成 `core/models/emotion_bert.pt`、不安装 torch、不联网下载模型。验收：编译自检通过、机器人启动日志显示回退规则生效、功能不受影响。
+
+### 137【C】训练数据集该填在哪里
+> 原：在哪里填数据集
+- 【任务】说明情绪/意图/NLP 训练数据的存放位置、文件格式与导入命令。
+- 【文件】`data/emotions.jsonl`、`data/emotions_tolabel.jsonl`、`data/intent.jsonl`、`data/nlp.jsonl`；`training/label_emotion.py`（`export`/`apply`）、`training/train_emotion.py`；`emotion_labeler.py`。
+- 【约束/输出/验收】给出一行样例 `{"text":"...","labels":["开心","温柔"]}`；输出「文件 / 字段 / 生成方式 / 被谁读取」表格 + 完整命令链（含 `python training/label_emotion.py apply`）。验收：按命令造一条数据能被训练脚本读取。
+
+### 138【E】单条文本多情绪
+> 原：一段话可能包含多种不同的情感
+- 【任务】说明多标签情绪建模的必要性、当前项目的支持情况，以及如何标注与推理。
+- 【文件】`core/emotion_model.py` 的 `predict_emotions()`（BCE + 阈值 0.5）、`training/train_emotion.py`（多标签向量）、`assets/emotion_labels.json`（19 类）、`emotion_labeler.py`（多标签/分割标注）、`MEMORY.md` §1 Q。
+- 【约束/输出/验收】只答不改代码；说明「分割文本」与「多标签」两种处理方式的区别与各自适用场景；验收：结论能对应到标注工具与训练脚本的具体函数。
+
+### 139【E】哪个方案最好做
+> 原：哪个最好做哪个
+- 【任务】在 135 列出的 NLP 能力中按「实现成本」排序，选出一个最快可落地的并说明理由。
+- 【文件】`core/topic_ner.py`（jieba 规则，最轻）、`core/emotion_model.py`、`core/intent_model.py`、`training/train_*.py`。
+- 【约束/输出/验收】只答不改代码；输出「方案 / 是否需训练 / 是否需 GPU / 预计改动文件 / 风险」表格 + 一个推荐结论；验收：推荐方案能在不装 torch 的前提下跑通。
+
+### 140【E】哪个效果最好、最像真人、适用最广
+> 原：那我的意思是哪个的效果最好，最像真人，适用场景最多做哪个
+- 【任务】改按「效果 / 活人感 / 适用场景广度」三个维度重新评估 135 的 NLP 能力，给出最优选并说明代价。
+- 【文件】`core/nlp_understanding.py`（联合理解 + `to_tts_style()`）、`core/memory.py`（长期画像）、`assets/persona.json`、`training/train_nlp.py`、`MEMORY.md` §1 Q。
+- 【约束/输出/验收】只答不改代码；必须同时给出「效果最优」与「139 的最易做」的差异对比和分阶段路线；验收：每条结论都能对应到具体文件与是否已有权重。
+
+## 5. 逐条规范化（141–175 · 创新点、记忆、人设、项目重构、配置化）
+
+### 141【E】训练出的权重文件还能用在哪
+> 原：那我的训练出权重文件还能用在哪里
+- 【任务】说明 `core/models/emotion_bert.pt` 这类本地权重在项目内外的复用场景与接入方式。
+- 【文件】`core/emotion_model.py`（`load_model`/`predict_emotions`）、`qq_bot_relay.py` 的情绪调用点、`core/nlp_understanding.py` 的 `to_tts_style()`、`training/train_emotion.py`。
+- 【约束/输出/验收】只答不改代码；输出「场景 / 需改造的接口 / 是否需重新训练 / 限制」表格；验收：每条场景能定位到具体调用点，并说明权重标签顺序由 `assets/emotion_labels.json` 决定。
+
+### 142【E】仅调用 API 创新度不足
+> 原：如果只是调用API肯定创新度不够
+- 【任务】指出本项目超出「纯 API 调用」的自研部分，给出可写成毕设创新点的方向。
+- 【文件】`core/`（本地记忆/多任务理解）、`training/`（数据闭环与微调脚本）、`emotion_labeler.py`（人工标注工具）、`auto_learn.py`（语料自动学习）、`qq_bot_relay.py`（主动接话/多模态编排）、`MEMORY.md`。
+- 【约束/输出/验收】只答不改代码；区分「已实现」「有代码未训练」「纯设想」；输出「创新点 / 证据文件 / 可验证指标 / 完成度」表格。
+
+### 143【F】「可以」的规范化
+> 原：可以
+- 【规范化】承接上一轮：同意执行的是**142 中列出的创新点落地方案**（若不是请写出编号与名称）。
+- 【输出/验收】先回显「同意执行的具体事项 + 涉及文件」再动手；只做该事项，附编译自检与验证步骤。
+
+### 144【E】结合已有 NLP 知识做组合创新
+> 原：根据已有所有NLP知识做结合性创新
+- 【任务】结合本项目已有的意图/情感/NER/记忆模块，设计一个「组合式创新点」并给出技术路线。
+- 【文件】`core/nlp_understanding.py`、`core/memory.py`、`core/topic_ner.py`、`assets/emotion_labels.json`、`qq_bot_relay.py` 的 `get_answer()`、`training/train_nlp.py`、`MEMORY.md` §1 Q。
+- 【约束/输出/验收】只答不改代码（除非明确要求实现）；输出「创新点 / 模块组合 / 数据流（文件级） / 可验证指标 / 与纯 API 调用的区别」；验收：数据流每个节点都能对应到现存文件。
+
+### 145【A】实时记录全量群消息用于情感训练
+> 原：可以，并且从现在开始实时记录所有群友消息用于情感训练，情感种类是复杂的多元化的，而不是只有简单两个字
+- 【任务】实现全量群消息落盘作为情感训练语料，标签体系支持复杂多元情绪（多标签），而非简单二分类。
+- 【文件】`qq_bot_relay.py` 的 `_log_raw_message()`/`on_group_message_create()`；`data/chatlog_raw.jsonl`、`data/emotions_tolabel.jsonl`；`training/label_emotion.py export`；`assets/emotion_labels.json`（19 类，可扩充）；`emotion_labeler.py`。
+- 【约束/输出/验收】落盘前脱敏（不含 openid/昵称/密钥）、只存正文与时间；其他机器人消息不入语料。验收：群内发言后 `chatlog_raw.jsonl` 新增一行且 `export` 能产出待标数据，标签集含 19 类。
+
+### 146【F】范围声明：暂不管论文/毕设
+> 原：暂时不用管论文毕设方面，专心完成该项目
+- 【规范化】本轮及后续 N 轮**只做项目功能实现与 bug 修复**，不产出简历/毕设/论文类文档（129–134、142、144 暂不执行）。
+- 【输出/验收】先回显当前待办（按编号）并剔除文档类任务；交付时只含代码/配置改动与验证命令，不写方案性段落。
+
+### 147【C】API Key 更换
+> 原：key换了
+- 【任务】更新本地私有配置中的 API Key，并确认所有读取点走最新值（含 mtime 热重载路径）。
+- 【文件】`config.json` 对应键（请指明是 `DEEPSEEK_API_KEY` / `MIMO_API_KEY` / `QQ_SECRET` 中的哪一个）；`qq_bot_relay.py` 的 `_config_fresh()`/`load_config()`；`config.example.json` 保持占位符。
+- 【约束/输出/验收】提示词与回复中不出现新 Key 明文；输出：需要改的键名 + 是否需重启 + 连通性检查命令。验收：一次真实调用成功、`logs/` 无 401/403 报错。
+
+### 148【E】小忺的记忆时长
+> 原：小忺的记忆力是多久
+- 【任务】说明当前短期上下文与长期记忆的保留范围/条数/时效，以及如何调整。
+- 【文件】`core/memory.py`（`get_history`/`record`/`profile_prompt`）、`data/memory.db`、`qq_bot_relay.py` 的记忆注入点、`MEMORY.md`（会话级记忆文档）。
+- 【约束/输出/验收】只答不改代码；输出「记忆类型 / 存储位置 / 保留策略 / 可调参数 / 是否跨重启」表格；验收：结论能对应到 `memory.py` 的具体函数与 SQL/清理逻辑。
+
+### 149【A】本地上下文记忆 + 主动群内互动
+> 原：现在机器人已经有获取群内所有消息的权限，做上下文本地记忆和主动群内发消息互动
+- 【任务】实现群聊上下文本地记忆（跨消息理解）并让主动接话基于该上下文参与互动。
+- 【文件】`core/memory.py`（新建/扩展）、`qq_bot_relay.py` 的 `on_group_message_create()` 主动分支、`get_answer()`；`data/memory.db`；`assets/proactive_config.json`。
+- 【约束/输出/验收】按群隔离上下文、不含 openid 明文、不把全量历史塞进 prompt（词元预算）；其他机器人消息不进记忆。验收：连续三句同一话题，主动接话能正确引用上文且不串群。
+
+### 150【A】`/回复频率` 三档 + 关闭
+> 原：加/回复频率 三档和关闭
+- 【任务】新增 `/回复频率` 指令，提供高/中/低三档与「关闭」，控制主动接话概率与冷却。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`get_reply_freq()`/`set_reply_freq()`/`reply_freq_params()`、`_cmd_proactive()`；`assets/proactive_config.json`（`levels`）。
+- 【约束/输出/验收】四档均可用、设置持久化、@ 直接提问不受「关闭」影响；命令注册进 `COMMANDS` 并补 `/help`。验收：`/回复频率 低` 后主动接话明显减少，`关闭` 后仅 @ 才回复。
+
+### 151【B】小忺完全不回复、@ 也无反应
+> 原：现在小忺不会说话了，@也不回
+- 【任务】按优先级定位「完全静默」根因：进程存活 → 消息入口异常 → @ 判定 → 命令分发 → 大模型/兜底 → 发送权限。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()`（注意 `sender` 须先定义，见 `MEMORY.md` §1 A）、`on_group_at_message_create()`、`_reply()`、`get_answer()`；`assets/bot_openids.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需附完整日志与复现消息；先给排查顺序和根因，再最小修复，禁止盲改多处。验收：`@小忺 你好` 与「小忺你好」都能回复，日志有 `[@调试]`/ `[群消息]` 正常记录。
+
+### 152【A】喊名字即可回复（免 @）
+> 原：需要在有机器人名字的时候不用@也能回复
+- 【任务】消息文本命中机器人名字时免 @ 触发回复，同时避免抢答别人。
+- 【文件】`qq_bot_relay.py` 的 `_BOT_NAMES`、`_directed_to_other()`、`on_group_message_create()` 的名字判定、`assets/persona.json`（`名字`）。
+- 【约束/输出/验收】只认名字出现在句首/直接称呼场景；`@别人` 的消息不抢答（与 181 让步联动）。验收：「小忺下午吃什么」有回复；`@小鱼 /help` 无回复。
+
+### 153【E】`_BOT_NAMES` 在哪个文件
+> 原：_BOT_NAMES = ["小忺", "忺"]在那个文件
+- 【任务】指出 `_BOT_NAMES` 常量的确切位置、作用与修改后是否需重启。
+- 【文件】`qq_bot_relay.py` 的 `_BOT_NAMES` 常量、名字判定调用点；`assets/persona.json`（人设名）；`assets/启动.txt`。
+- 【约束/输出/验收】只答不改代码；输出「文件 / 常量 / 引用它的函数 / 修改生效方式」；验收：回答中给出的函数名可在主程序中检索到。
+
+### 154【F】「继续调教小忺的灵魂」的明确化
+> 原：我现在要继续优化调教小忺的灵魂
+- 【规范化】承接上一轮：把「调教灵魂」具体化为对 `<ROOT>/assets/persona.json` 的**人设字段调整**（请指明：性格 / 说话风格 / 口头禅 / 称呼 / 边界），本轮只改人设不写代码。
+- 【输出/验收】先回显「要改的字段 + 新值 + 期望体感」；交付修改后的 JSON 片段 + 热更新验证（发一句相同的话对比前后回复），不改 `persona.base.json` 除非明确要求。
+
+### 155【A】长期记忆 / 用户画像注入 prompt
+> 原：长期记忆/用户画像(新增 profile.json：跨会话记住远旅的偏好、梗、情绪史、重要事件，并注入 prompt。让…
+- 【任务】实现跨会话用户画像：记住偏好、梗、情绪史、重要事件，并在构造 prompt 时按相关度注入。
+- 【文件】`core/memory.py`（`profile_prompt`/`remember_fact`）、`data/memory.db`（或按原议 `profile.json`，需明确二选一）、`qq_bot_relay.py` 的 `get_answer()`/`build_persona_prompt()`；`assets/members.json`。
+- 【约束/输出/验收】需补齐被 `…` 截断的原文；只注入相关片段，控制长度避免词元膨胀；不含 openid 明文。验收：新会话中问「我上次说喜欢什么」能正确 recall，且 `usage.json` 增长不明显。
+
+### 156【E】为什么不用 MySQL
+> 原：为什么不用MySQL
+- 【任务】结合本项目规模说明本地记忆选用 SQLite 而非 MySQL 的理由，以及什么条件下该迁移。
+- 【文件】`core/memory.py`、`data/memory.db`、`data/chatlog_raw.jsonl`、`MEMORY.md`、`assets/启动.txt`。
+- 【约束/输出/验收】只答不改代码；输出「维度（部署/并发/数据量/运维/毕设可演示性）」对比表 + 迁移触发条件；验收：结论与当前单机单进程架构一致。
+
+### 157【B】websocket 连接异常
+> 原：[ERROR] (gateway.py:51)on_error [botpy] websocket连接: None, 异…
+- 【任务】根据完整 `on_error` 日志定位 websocket 断连/`None` 异常的根因，给出重连与保活修复。
+- 【文件】`qq_bot_relay.py` 的连接配置与 `on_ready()`；`config.json` 的凭证与 `SERVER_URL`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整日志与是否伴随 010 类 HTTP ERROR；输出根因 + 重连策略 + 是否需要重启；验收：断网恢复后自动重连且群消息恢复。
+
+### 158【B】带 `\` 的指令不回复
+> 原：小忺现在会不回复带\的指令
+- 【任务】定位消息含反斜杠 `\` 时指令解析失效或被误过滤的根因并修复。
+- 【文件】`qq_bot_relay.py` 的 `parse_group_content()`、`handle_command()`、`_directed_to_other()`、正则常量（如 `_STORY_RE`）；`logs/botpy.log.*`。
+- 【约束/输出/验收】需附一条完整复现原文（如 `<@openid> \\两个恐怖故事`）；区分「转义处理」与「命令前缀识别」。验收：带 `\` 的 `/指令` 和「讲个恐怖故事」都能正常响应。
+
+### 159【A】独立人设文件，可实时编辑
+> 原：新建一个机器人人设文件，让我方便实时修改人设，包括人设该有的所有种类
+- 【任务】建立结构完整、可热更新的人设文件，覆盖身份、性格、说话风格、口头禅、示例对话、关系、边界等类别。
+- 【文件】`assets/persona.json`（运行时）、`assets/persona.base.json`（基线）；`qq_bot_relay.py` 的 `load_persona()`（mtime 热更新）、`build_persona_prompt()`、`_cmd_persona()`。
+- 【约束/输出/验收】`_` 开头元字段不进 prompt；新增字段不影响旧配置读取；改完 JSON 无需重启。验收：改「说话风格.语气」后下一条回复即变化，`/人设` 可查看当前生效内容。
+
+### 160【E】整理项目结构说明
+> 原：现在整理一下整个项目结构
+- 【任务】输出当前项目真实结构树与各模块职责说明（不改动文件）。
+- 【文件】根目录 `qq_bot_relay.py`/`auto_learn.py`/`emotion_labeler.py`/`MEMORY.md`、`core/`、`training/`、`assets/`、`data/`、`images/`、`logs/`、`prompts/`、`config.example.json`。
+- 【约束/输出/验收】只答不改代码；标注哪些文件被 `.gitignore` 忽略但磁盘存在；输出树 + 职责表；验收：与 §0.3 速查表一致、不含已失效的 `E:` 路径。
+
+### 161【A】彻底分类重构目录
+> 原：彻底分类（需改代码）(全部按 core/(核心模块) training/(训练) assets/(知识库+配置) dat…
+- 【任务】按 `core/`（运行时推理）、`training/`（离线训练）、`assets/`（知识库+配置）、`data/`（运行数据）、`images/`、`logs/`、`prompts/` 重新归类文件，并同步所有 import 与路径常量。
+- 【文件】全部根目录脚本与 `qq_bot_relay.py` 的路径常量（`BASE_DIR`、`CONFIG_FILE`、`PERSONA_FILE`、`VOICE_CONFIG_FILE`、`IMAGES_DIR` 等）、`auto_learn.py`、`emotion_labeler.py`、`training/*.py`、`MEMORY.md`（同步路径）。
+- 【约束/输出/验收】需补齐被 `…` 截断的分类方案；**先出迁移清单（旧路径 → 新路径）等我确认再动手**；不改 `.bak` 备份；迁移后逐个编译自检 + 启动验证。验收：无 ModuleNotFoundError、所有读写路径指向新位置。
+
+### 162【A】日志重定向
+> 原：加一段日志重定向
+- 【任务】把控制台输出同步写入日志文件，便于长期排错（含 botpy 自身日志）。
+- 【文件】`qq_bot_relay.py` 启动段（logging 配置）、`logs/`；`assets/启动.txt`（说明）；`MEMORY.md` §5（验证方法）。
+- 【约束/输出/验收】按天/大小滚动、UTF-8、不重复打印、不记录密钥与消息全文隐私。验收：`logs/` 下生成日志文件且内容含 `[配置]`/`[群消息]` 关键前缀，控制台输出不变。
+
+### 163【A】日志重定向（重复，转验收）
+> 原：加一段日志重定向
+- 【规范化】与 162 完全重复，不重复实现；改为验收 162。
+- 【输出/验收】检查：日志文件是否生成、是否滚动、编码是否正确、是否有重复行、是否包含敏感信息；输出检查结论与必要的修补清单。
+
+### 164【A】主动回复独立配置文件
+> 原：设置一个主动回复的设置文件，我能直接在里面调关于主动回复的参数
+- 【任务】把主动接话相关参数全部抽到独立配置文件，用户可直接编辑生效。
+- 【文件】`assets/proactive_config.json`（`enabled`/`default_level`/`levels` 各档 `chance`/`cooldown`）；`qq_bot_relay.py` 的 `load_proactive_config()`、`_proactive_levels()`、`get_reply_freq()`、`_cmd_proactive()`。
+- 【约束/输出/验收】每轮循环重读配置（改完即时生效，不重启）；缺字段用兜底补齐；新增键同步兜底与白名单。验收：改 `chance` 后 1 分钟内接话频率变化，且 `/回复频率` 与文件内容一致。
+
+### 165【A】语音配置文件（原文误写「主动回复参数」）
+> 原：设置一个语音回复的配置文件，我能直接在里面调关于主动回复的参数
+- 【规范化】原文「语音回复的配置文件」与「主动回复的参数」矛盾；按**语音配置**理解：建立独立语音配置文件（若指主动参数见 164，请确认）。
+- 【文件】`assets/voice_config.json`；`qq_bot_relay.py` 的 `VOICE_CONFIG_FILE`、`_VOICE_CFG_FALLBACK`、`load_voice_config()`/`save_voice_config()`。
+- 【输出/验收】输出「需确认项」+ 配置项清单；未确认前不覆盖已有 `assets/voice_config.json` 的用户设置。
+
+### 166【A】语音配置：频率与消息类型
+> 原：设置一个语音回复的配置文件，我能直接在里面调参数，参数需加：语音回复频率，需语音回复的消息类型等
+- 【任务】在语音配置中提供 `frequency`（发语音概率）与 `message_types`（`chat`/`proactive`/`story`/`command` 各自开关）等可调参数。
+- 【文件】`assets/voice_config.json`；`qq_bot_relay.py` 的 `_VOICE_CFG_FALLBACK`、`load_voice_config()`/`save_voice_config()`、`_voice_plan()`、`_maybe_speak()`。
+- 【约束/输出/验收】新增字段必须同时加入兜底 + load/save 白名单（`MEMORY.md` §6 陷阱，语音只发文字的根因）；改 JSON 后说明是否热更新。验收：把 `story` 关掉后讲故事只出文字，把 `frequency=0` 后普通聊天不发语音。
+
+### 167【B】频繁触发「我还在学习呢～」兜底
+> 原：小忺现在频繁触发这个问题我还在学习呢～你可以换种方式问我，或者自己先填好答案库哦 (｡•ᴗ•｡)回复
+- 【任务】定位本地兜底回复被高频触发的根因（QA 库未命中 / 大模型被关闭或熔断 / 配置错误），并降低出现率。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_xlsx()`、`get_answer()` 的分支顺序、018 的熔断、`config.json` 的 `LLM_BACKEND`；`assets/聊天机器人问答库.xlsx`、`data/usage.json`。
+- 【约束/输出/验收】需附 3 条触发时的用户输入与日志；输出根因 + 修复（含兜底文案去重/降频）；验收：同样 10 条输入不再连续出现该兜底。
+
+### 168【A】切换 DeepSeek API
+> 原：我要换deepseekAPI
+- 【任务】把大模型后端切换为 DeepSeek 官方 OpenAI 兼容接口，保留现有后端可回退。
+- 【文件】`qq_bot_relay.py` 的 `answer_from_deepseek()`、`answer_from_llm()`、`get_answer()`；`config.json` 的 `LLM_BACKEND`/`DEEPSEEK_*`；`config.example.json`（占位符）；`data/usage.json`。
+- 【约束/输出/验收】Key 只从 `config.json` 读，不打印；切换不影响本地 QA 兜底与词元统计。验收：发一条消息走 DeepSeek 成功且 `usage.json` 增长，切回原后端仍可用。
+
+### 169【B】主动回复误触发 + 毕设影响咨询
+> 原：主动回复逻辑有问题，是不是他对于看不到的表情等也会自动输出兜底回复，以及改模型API会不会影响我的毕设通过
+- 【任务】两件事：①验证并修复「纯表情/不可见内容触发主动兜底回复」；②回答「更换模型 API 是否影响毕设」。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()` 主动分支、`parse_group_content()`、`get_answer()`；`MEMORY.md` §1 L（占位符剥离）；`config.json` 的 `LLM_BACKEND`。
+- 【约束/输出/验收】①需附复现日志，修复后纯表情不接话；②只答不改代码，从「系统架构/自研模块/实验可复现性」角度说明；两件事分开输出。
+
+### 170【B】同 169（重复，转回归验证）
+> 原：主动回复逻辑有问题，是不是他对于看不到的表情等也会自动输出兜底回复，以及改模型API会不会影响我的毕设通过
+- 【规范化】与 169 重复，不重复修复；改为回归验证 169 的结论。
+- 【输出/验收】输出：纯表情 / 空消息 / 只有 @ / 正常文本 四类用例的实测结果表；若有不通过项再给最小修复。
+
+### 171【F】「那就双端」的明确化
+> 原：那就双端
+- 【规范化】承接上一轮：确认「双端」= **同时保留并切换两个大模型后端**（如 DeepSeek 与 sizhi/官方接口），在 `config.json` 用 `LLM_BACKEND` 选择，而非同时调用两次。
+- 【输出/验收】先回显确认再实现；输出后端切换表 + 每个后端的连通性验证命令；验收：切换后仅调用所选后端，`usage.json` 只计一次。
+
+### 172【A】可选后端 + 一键关闭大模型
+> 原：加入配置文件，能选择用哪个和直接关闭大模型调用
+- 【任务】在配置中提供「选择大模型后端」与「完全关闭云端大模型」两个开关，关闭时全部走本地回复。
+- 【文件】`config.json` 的 `LLM_BACKEND`（值含 `off`/`none`）、`qq_bot_relay.py` 的 `DEFAULT_CONFIG`、`answer_from_llm()`、`get_answer()`；`config.example.json`；`assets/聊天机器人问答库.xlsx`。
+- 【约束/输出/验收】关闭后零 API 请求、零词元消耗且仍有可用回复；新增值同步兜底与示例。验收：设为 `off` 后发 5 条消息，`data/usage.json` 不增长且都有本地回复。
+
+### 173【B】主动接话内容异常日志核查
+> 原：[主动] 群 `<群openid已脱敏>` 主动接话：刚才那段是主人让我学的！ 我平…
+- 【任务】根据完整日志判断该主动接话是否「没参与却提到自己/接了别的机器人的话」，并定位来源。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()` 主动分支、bot 过滤、`_directed_to_other()`；`MEMORY.md` §1 C/D；`logs/botpy.log.*`。
+- 【约束/输出/验收】日志中的群 openid 用占位符表述；需补齐被 `…` 截断的上下文；输出根因 + 修复；验收：复现同类场景不再出现不合时宜的主动接话。
+
+### 174【F】「问题图片」的明确化
+> 原：问题图片
+- 【规范化】原句既无图片本体也无问题描述。请粘贴图片或存到 `<ROOT>/images/xxx.png` 后引用相对路径，并按「现象 / 复现步骤 / 期望结果」描述问题。
+- 【输出/验收】未补齐前只输出「需确认清单」，不改动代码。
+
+### 175【B】接口请求异常（第六次）
+> 原：[ERROR] (http.py:76)_handle_response [botpy] 接口请求异常，请求连接: ht…
+- 【规范化】再次复现，归入 057/066 的统一重试任务；本条只核对「修复是否已部署到当前进程」。
+- 【输出/验收】检查当前进程启动时间、代码版本特征、该 ERROR 最近 1 小时次数；若仍高频输出升级方案，不重复改同一处。
+
+## 6. 逐条规范化（176–203 · 活人感、认人、多模态、语音收尾）
+
+### 176【A】继续提升活人感
+> 原：依旧没有活人感
+- 【任务】在 045 基础上继续优化「活人感」，但先给可判定的差距清单，再选 1–2 项最小改动落地。
+- 【文件】`qq_bot_relay.py` 的 `_NATURAL_RULES`、`get_answer()`、主动接话分支、`core/memory.py`；`assets/persona.json`、`assets/persona.base.json`、`assets/网络热梗精选合集.txt`、`auto_learn.py`。
+- 【约束/输出/验收】需附 3 条「实际回复 vs 期望回复」样例；不逐句调用大模型、不做大重构；优先用 `python auto_learn.py --once` 学高赞评论并热更新人设。验收：同一批样例回复更自然、不重复模板、词元消耗不明显上升。
+
+### 177【A】回复更短更克制
+> 原：更短更克制(一句话能说清就别写两段，话更少、更留白，不抢戏)
+- 【任务】把小忺的回复风格改为「短、克制、留白」：一句话能说清不写两段，不抢话、不加解释与多余 emoji。
+- 【文件】`assets/persona.json` 的 `说话风格`（`字数倾向`/`语气`/`示例对话`）、`assets/persona.base.json`；`qq_bot_relay.py` 的 `build_persona_prompt()`、`get_answer()` 的提示词注入；`assets/网络热梗精选合集.txt`。
+- 【约束/输出/验收】故事/笑话、天气、菜单等结构化指令不受字数限制；人设改动热更新不重启。验收：随机 10 条闲聊平均句数/字数下降且仍符合人设。
+
+### 178【A】正确读取群友昵称，不认错人
+> 原：实现一下群友的名字读取，不然小忺老认错人，一直以为某段话是远旅说的
+- 【任务】修复发言人识别：从消息负载正确读取昵称/头衔，禁止把任意群友消息都当成主人「远旅」说的。
+- 【文件】`qq_bot_relay.py` 的 `_get_member_name()`、`_display_name()`、`_live_nick()`、`_set_member_name()`、`_learn_name_from_text()`；`assets/members.json`、`config.json` 的 `OWNER_OPENID`；`logs/botpy.log.*` 的 `[昵称探测]`。
+- 【约束/输出/验收】以 `member_openid` 为键而非昵称文本猜测；openid 不出现在回复里。验收：三位不同群友依次发言，日志 `who=` 分别正确，不再全部显示「远旅」。
+
+### 179【E】如何查看自己的 openid
+> 原：怎么看我的openid
+- 【任务】说明获取自己（及群友/机器人）openid 的可行方法，并指出项目里已有的记录位置。
+- 【文件】`qq_bot_relay.py` 的 `on_ready()`、`_learn_bot_openid()`、`_leading_at_openid()`；`assets/bot_openids.json`、`assets/members.json`、`logs/botpy.log.*` 的 `[@调试]`/`[昵称探测]`；`config.json` 的 `OWNER_OPENID`。
+- 【约束/输出/验收】只答不改代码；输出「方法 / 命令或日志特征 / 得到的是哪种 id（user_openid 还是 member_openid）」表格；验收：明确说明二者不可混用（见 `MEMORY.md` §1 F 更正）。
+
+### 180【B】收不到 `@小忺` 的消息
+> 原：他现在接受不到@小忺的消息
+- 【任务】按 `MEMORY.md` §1 F 的排错顺序定位 @ 失灵：AT 事件是否触发 → mentions 形态（dict/对象）→ `is_you`/`username` 是否可取 → 已学 openid 是否落盘。
+- 【文件】`qq_bot_relay.py` 的 `_mention_fields()`、`_leading_at_openid()`、`_learn_bot_openid()`、`_load_bot_openids()`、`/认领` 命令、`on_group_at_message_create()`；`assets/bot_openids.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需附 `[@调试] … 明细=…` 完整日志行；禁止恢复「盲猜 @ openid」的旧兜底（会误认成小鱼）。验收：`@小忺 /认领` 一次后重启仍能被 @ 命中，`@小鱼` 不抢答。
+
+### 181【A】两个机器人同群时的让步策略
+> 原：群里两个机器人容易刷屏，我们做一个让步
+- 【任务】实现同群多机器人防刷屏：识别其他机器人消息并跳过、名字/@ 指向别人时不插嘴、主动接话降频。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()`/`on_group_at_message_create()` 的 bot 过滤、`_directed_to_other()`、`_bot_openids` 集合、`assets/proactive_config.json`。
+- 【约束/输出/验收】不得把「小鱼是真人的情况」误判为机器人（见 `MEMORY.md` §1 C 待确认项）；输出让步规则表。验收：`@小鱼 /help` 小忺静默、群内连续消息不出现两机器人交替刷屏。
+
+### 182【A】新增两档更低回复频率
+> 原：加两档更低的回复频率
+- 【任务】在 150 的三档 + 关闭之外，再增加「极低」「近乎静默」两档，并接入 `/回复频率`。
+- 【文件】`assets/proactive_config.json` 的 `levels`；`qq_bot_relay.py` 的 `load_proactive_config()`、`_proactive_levels()`、`get_reply_freq()`、`_cmd_proactive()`、`_cmd_help()`。
+- 【约束/输出/验收】档位参数（chance/cooldown）写在配置文件而非硬编码；菜单同步列出六档。验收：`/回复频率 近乎静默` 后 10 分钟内几乎不主动接话，@ 仍即时回复。
+
+### 183【D】相对路径截图
+> 原：@image:image.png
+- 【规范化】引用的是相对路径但项目内无对应文件；请把图片放到 `<ROOT>/images/image.png` 并用 `images/image.png` 引用，同时写明「现象 / 复现步骤 / 期望结果」。
+- 【输出/验收】未补齐前输出「需确认清单」；补齐后按 B 类排错模板执行，涉及文件按图片内容指定。
+
+### 184【B】名字触发消息的日志核查
+> 原：[群消息] raw='小忺小忺下午吃什么' mid=ROBOT1.0_sNRmwRXMkdQzWbTsCOMhPiQor…
+- 【任务】根据完整日志核对「小忺小忺下午吃什么」是否被名字触发逻辑识别、是否重复回复、是否走了主动分支。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()`、`_BOT_NAMES`、`_directed_to_other()`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整日志行；mid 仅作定位用不写入代码；输出：命中路径 + 是否存在双入口重复回复；验收：该消息只收到一条回复且 `who=` 正确。
+
+### 185【B】启动日志中的 NLP 模块状态
+> 原：PS E:\Desktop\jiqiren> python qq_bot_relay.py [NLP] 情感/意图分类/…
+- 【任务】解读启动日志 `[NLP] 情感/意图分类/…` 行，判断哪些模块加载成功、哪些因缺权重回退规则。
+- 【文件】`qq_bot_relay.py` 的 `core/` 模块导入处、`core/emotion_model.py` 的 `load_model()`、`core/nlp_understanding.py`；`core/models/emotion_bert.pt`、`assets/emotion_labels.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整启动输出；输出「模块 / 日志特征 / 是否加载权重 / 回退行为」表格；验收：能据此确认 136「训练暂不执行」的状态。
+
+### 186【B】`[昵称探测] author 键` 日志
+> 原：[昵称探测] author 键 = ['bot', 'id', 'member_openid', 'member_rol…
+- 【任务】利用完整 `[昵称探测]` 输出确定消息 author 的真实字段结构，修正昵称读取逻辑。
+- 【文件】`qq_bot_relay.py` 的 `_get_member_name()`、`_mention_fields()`；`assets/members.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】需补齐完整键列表；同时兼容 dict 与对象两种形态（见 `MEMORY.md` §1 F）；验收：按新键读取昵称后 178 的认错人问题消失。
+
+### 187【A】群消息多模态要素识别（为生图 API 预留）
+> 原：优化处理群友消息的能力，最好能像真人一样识别群友头像，昵称，头衔，文本，图片 ，语音。后续我会加入生图API
+- 【任务】统一解析群消息中的头像、昵称、头衔、文本、图片、语音等要素，形成结构化上下文；为后续「生图 API」预留可扩展接口，**本轮不接生图**。
+- 【文件】`qq_bot_relay.py` 的 `parse_group_content()`、`_get_member_name()`、`core/nlp_understanding.py`（`to_tts_style()`/NER）、`_fetch_image_data_url()`；`assets/members.json`；`logs/botpy.log.*`。
+- 【约束/输出/验收】输出结构化字段定义（含缺省值）；不含 openid 明文；图片/语音解析失败不阻断文字回复。验收：构造含图片与语音的消息，日志打印出完整字段且回复正常。
+
+### 188【B】`[昵称探测]` 日志（重复）
+> 原：[昵称探测] author 键 = ['bot', 'id', 'member_openid', 'member_rol…
+- 【规范化】与 186 重复，合并到 186；本条只验证修复后该日志是否仍能打印出正确昵称。
+- 【输出/验收】输出修复前后 `[昵称探测]` 对比 + 三位群友的识别结果；不重复改解析代码。
+
+### 189【D】图像理解（deepseek-flash）文档
+> 原：图像理解 deepseek-flash 模型支持在文本之外输入图片，你可以让模型描述图片、识别截图中的文字、分析图表等。…
+- 【任务】阅读粘贴的「图像理解」文档全文，提炼图片输入格式与调用方式，评估接入 187 的结构化上下文。
+- 【文件】`qq_bot_relay.py` 的 `_fetch_image_data_url()`、`get_answer()`；`core/nlp_understanding.py`；`config.json` 的 `DEEPSEEK_*`；原文建议存 `<ROOT>/prompts/` 备查。
+- 【约束/输出/验收】资料被 `…` 截断需补齐；**本轮只出接入方案，不改线上代码**（与 187「本轮不接生图」一致）；输出：请求格式 + 触发条件 + 词元成本评估。
+
+### 190【D】网页搜索与抓取（Search / Fetch）文档
+> 原：网页搜索与抓取 Search 接口和 Fetch 接口为 Agent 与 RAG 应用提供实时网页内容： Search …
+- 【任务】阅读粘贴的 Search/Fetch 接口文档全文，对照本项目已有 `_web_search()`/`_web_fetch()` 给出对齐或替换建议。
+- 【文件】`qq_bot_relay.py` 的 `_web_search()`/`_web_fetch()`；`config.json` 的联网开关；`assets/启动.txt`。
+- 【约束/输出/验收】资料被 `…` 截断需补齐；输出「官方接口 / 本项目实现 / 差异 / 是否建议切换」表格；未确认前不改线上配置。
+
+### 191【D】语音识别（MiMo-V2.5-ASR）文档
+> 原：语音识别（MiMo-V2.5-ASR） 语音识别支持将输入的音频自动转换为文本输出，适用于会议转写、歌词识别、方言转写、…
+- 【任务】阅读粘贴的 ASR 文档全文，提炼音频输入与返回格式，评估「群友语音消息 → 文本」的接入点。
+- 【文件】`qq_bot_relay.py` 的语音消息解析（187 的结构化字段）、`config.json` 的 `MIMO_*`；`core/nlp_understanding.py`。
+- 【约束/输出/验收】资料被 `…` 截断需补齐；音频只从 QQ 消息载体取，不读取项目外文件（见 090 硬约束）；本轮只出方案不改线上代码。
+
+### 192【E】识图与语音的触发方式
+> 原：识图和语音要怎么触发
+- 【任务】说明 189/191 两类能力在本项目里应如何触发（指令 / 消息类型 / 自动识别），并给出推荐方案。
+- 【文件】`qq_bot_relay.py` 的 `COMMANDS`、`handle_command()`、`on_group_message_create()` 的消息类型分支、`parse_group_content()`；`assets/voice_config.json`。
+- 【约束/输出/验收】只答不改代码；输出「能力 / 触发方式 / 涉及函数 / 是否耗词元 / 推荐默认」表格；验收：推荐默认不造成刷屏或额外费用。
+
+### 193【A】主动在群里发语音
+> 原：我要小忺会主动发语音在群里
+- 【任务】让主动接话/定时道安可以按配置发送语音（而非仅被动 `/说`）。
+- 【文件】`qq_bot_relay.py` 的 `on_group_message_create()` 主动分支、`_push_voice()`、`_greet_scheduler()`、`_maybe_speak()`；`assets/voice_config.json` 的 `message_types.proactive` 与 `frequency`；`assets/proactive_config.json`。
+- 【约束/输出/验收】概率可配、语音失败回退文字、不与其他机器人抢话（181）；改配置说明是否热更新。验收：把 `proactive` 打开并调高概率，群里出现主动语音且无重复文字。
+
+### 194【D】截图（需重新提供）
+> 原：@image:C:\Users\840G7\AppData\Local\CodeBuddyExtension\Data\…
+- 【规范化】同 035：临时路径不可读。请粘贴图片本体或存到 `<ROOT>/images/` 后用相对路径引用，并写明问题现象。
+- 【输出/验收】未补齐前只输出「需确认清单」，不改动代码。
+
+### 195【A】偶尔只发语音、不带文字（含定时道安）
+> 原：偶尔只发语音，发语音的时候不带文字，定时道安同理，同样给配置文件。
+- 【任务】实现「只发语音不带文字」模式：普通回复与定时道安按概率仅发语音，参数写入配置文件。
+- 【文件】`assets/voice_config.json` 的 `voice_only_chance`；`qq_bot_relay.py` 的 `_voice_plan()`、`_maybe_speak()`、`_push_voice()`、`_greet_scheduler()`、`_VOICE_CFG_FALLBACK`、`load_voice_config()`/`save_voice_config()`；`MEMORY.md` §1 B/H。
+- 【约束/输出/验收】**关键**：`voice_only_chance` 必须同时加入兜底和 load/save 白名单（曾因漏加载恒为 0）；语音失败必须补发文字。验收：`voice_only_chance=1.0` 时聊天与道安均为纯语音，关掉后恢复文字。
+
+### 196【A】同 195（重复，转验收）
+> 原：偶尔发语音，发语音的时候不带文字，定时道安同理，同样给配置文件。
+- 【规范化】与 195 重复，不重复实现；改为按 `MEMORY.md` §1 B 的验证清单回归。
+- 【输出/验收】检查 4 个调用点（群/私聊 × 故事/聊天）`plan=="voice_only"` 且失败补文字；定时道安 `_push_voice` 的 `style=None` 无 NameError；输出实测结果表。
+
+### 197【F】「请继续执行未完成的任务」
+> 原：请继续执行未完成的任务。
+- 【规范化】承接上一轮：继续完成 **195 的「只发语音」实现**（若不是请写出编号）。
+- 【输出/验收】先输出「已完成 / 未完成」清单（按 195 的验收项逐条对照），只做剩余部分；交付编译自检 + 群聊/私聊/定时道安三处实测结果，不引入新需求。
+
+### 198【A】跨消息引用
+> 原：跨消息引用
+- 【任务】实现「跨消息引用」：小忺回复时能引用群里前几条消息的内容（如「刚才那张图」「上一句」），且不凭空配图。
+- 【文件】`qq_bot_relay.py` 的 `_store_seen()`、`_resolve_refs()`、`on_group_message_create()` 主动分支、`get_answer()`；`core/memory.py`；`MEMORY.md` §1 D（主动接话不自动配图）。
+- 【约束/输出/验收】按群隔离、只保留最近 N 条、不含 openid；引用失败不编造内容。验收：「刚才那张图好看」能正确关联上一条带图消息，且主动接话不凭空贴图。
+
+### 199【B】`[昵称探测]` 日志（第三次）
+> 原：[昵称探测] author 键 = ['bot', 'id', 'member_openid', 'member_rol…
+- 【规范化】第三次重复，转为 186/178 的回归验证。
+- 【输出/验收】输出三位群友 + 一位机器人消息的 `who=`/`bot=` 识别结果；若仍有认错人，按 180 的排错顺序继续，不重复改同一处代码。
+
+### 200【B】讲恐怖故事无反应 + 又认错人
+> 原：依旧让小忺讲恐怖故事没有反应，以及现在又有点不会认人了
+- 【任务】两件事分别定位：①恐怖故事叙事分支未命中（正则/固定话术抢答/入口崩溃）；②发言人识别回退。
+- 【文件】`qq_bot_relay.py` 的 `_STORY_RE`/`_parse_narrative()`/`_narrative_directive()`、`on_group_message_create()`（`sender` 须先定义，见 `MEMORY.md` §1 A）、`_get_member_name()`；`assets/bot_openids.json`、`logs/botpy.log.*`。
+- 【约束/输出/验收】需附完整复现消息与日志；「讲个恐怖故事」「两个恐怖故事」都要覆盖；两件事分别给根因与修复。验收：两类说法均返回完整故事且语音为神秘情绪，`who=` 正确。
+
+### 201【A】三件事：主动发表情 / 语音不带文字 / 语音情绪按文本
+> 原：学会主动消息发库里的表情，配置你来写。他依旧会发语音的同时发文字，改进。语音情绪自动根据原本要输出的文本选择 图片所示问…
+- 【任务】拆成三项依次实现：①主动消息按概率发图库表情；②修复发语音仍带文字；③语音情绪按原本要输出的文本自动选择。
+- 【文件】`qq_bot_relay.py` 的 `_send_library_emoticon()`、`_voice_plan()`/`_maybe_speak()`、`_choose_voice_emotion()`/`_narrative_style()`；`config.json` 的 `EMOTICON_LIB` 与 `PROACTIVE_EMOTICON_CHANCE`；`assets/voice_config.json`；`MEMORY.md` §1 B/E/H。
+- 【约束/输出/验收】需补齐被 `…` 截断的「图片所示问题」；③须遵守「聊天固定音色、仅故事/笑话变情绪」（`MEMORY.md` §1 H），避免音色漂移；三项分别交付与验证。
+
+### 202【A】上下文过长 → 建立记忆文档
+> 原：现在上下文太长了，给我做记忆文档
+- 【任务】创建会话级记忆文档，压缩长上下文，供后续会话/重启快速回顾。
+- 【文件】`<ROOT>/MEMORY.md`（项目概览、已完成修复含根因、关键函数速查、配置旋钮、验证方法、待确认陷阱）；关联 `prompts/本项目提示词/261020-ing`（历史诉求）与 `core/memory.py`（运行时记忆）。
+- 【约束/输出/验收】**行号会漂移，一律以「函数名 + 作用」定位**；不写密钥、openid 明文；明确区分「运行时记忆（memory.db）」与「给 AI 看的记忆文档（MEMORY.md）」。验收：新会话只读该文件即可接着改代码，且包含 §5 编译自检命令。
+
+### 203【B】带 `\\` 的「两个恐怖故事」消息
+> 原：[群消息] raw='<@openid已脱敏> \\两个恐怖故事' mid…
+- 【任务】根据完整日志定位「`<@openid> \\两个恐怖故事`」未被识别为叙事请求的根因（转义符 / 数量词「两个」 / @ 判定 / 正则）。
+- 【文件】`qq_bot_relay.py` 的 `parse_group_content()`、`_STORY_RE`、`_parse_narrative()`、`_leading_at_openid()`、`_learn_bot_openid()`；`assets/bot_openids.json`；`logs/botpy.log.*`、`MEMORY.md` §1 F/K。
+- 【约束/输出/验收】日志中的 openid 用占位符；需补齐完整 raw 与 mid 之后的日志；输出根因 + 最小修复 + 回归用例（`@小忺 讲个恐怖故事`、`@小忺 两个恐怖故事`、带 `\\` 的变体）。验收：三种写法都能返回完整故事且认人正确。
+
+---
+
+## 7. 使用与维护约定
+
+1. **怎么用**：复制某个 `### NNN` 整段（含 `【文件】` 与 `【约束/输出/验收】`）发给 AI；首轮请连同 §0.4 公共约束一起发，之后同一会话内可省略。
+2. **怎么新增**：照 §0.1 七要素写，标题带【A–F】类别，`【文件】` 必须给 `<ROOT>` 相对路径 + 函数名/常量名；禁止出现「这个 / 继续 / 做进去」。
+3. **路径维护**：若项目根目录变化，只需改 §0.2 的 `<ROOT>`；`MEMORY.md` 与备份文件中的 `E:\Desktop\jiqiren` 是历史路径，不要照抄。
+4. **敏感信息**：`config.json`、`groups.json`、`assets/{voice_config,bot_openids,members,auto_learn,auto_learn_state}.json` 为本地私密文件，被 `.gitignore` 忽略；提示词中一律用占位符。
+5. **事实校准**：所有文件/函数落点以 `<ROOT>` 当前代码为准，可参考 `MEMORY.md` §3 速查表；行号会漂移，以函数名为准。
+6. **原文**：`prompts/本项目提示词/261020-ing.采用原文经AI规范化后便于项目理解和AI编程规范化。
+
