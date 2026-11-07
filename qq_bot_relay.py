@@ -26,6 +26,12 @@
   - 配置：敏感信息放 config.json / assets/*.json，绝不硬编码；多数配置支持 mtime 热更新，改完即时生效。
 """
 
+# 让 core/ 下的模块（memory / nlp_* / voice_persona）可被直接 import：
+# 脚本在根目录运行时 core 不在 sys.path，必须在任何 core 模块 import 之前注入
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "core"))
+
 import urllib.parse as _uparse
 import urllib.request as _ureq
 import time as _time
@@ -41,10 +47,6 @@ import re
 import threading
 import time
 from urllib.parse import quote
-
-# 让 core/ 下的模块（memory / nlp_*）可被直接 import（脚本在根目录运行时 core 不在 sys.path）
-import sys as _sys
-_sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "core"))
 
 # ---------- 可选 NLP 模块（未安装 torch/transformers/jieba 或权重缺失时自动回退规则）----------
 try:

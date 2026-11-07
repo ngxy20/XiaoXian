@@ -268,7 +268,9 @@ def score_emotions(text, scene, ctx, params, persona):
             if isinstance(kw, str) and kw and kw in t:
                 hits += 0.4 if _is_punct_kw(kw) else 1.0
         if hits:
-            add(lab, "keyword", min(hits / 2.0, 1.0), is_direct=True)
+            # 关键词表都是明确情绪词，命中 1 个即视为强信号；标点类已按 0.4 降权，
+            # 单独一个「？」不足以触发「疑问」，避免疑问句被无差别打上情绪
+            add(lab, "keyword", min(hits, 1.0), is_direct=True)
 
     # ② 模型输出（30 类细粒度 / 19 类多标签，经别名归一）
     for lab in _model_labels(t):
