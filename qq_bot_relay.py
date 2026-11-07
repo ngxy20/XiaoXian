@@ -63,8 +63,14 @@ try:
     import nlp_understanding
 except Exception:
     nlp_understanding = None
+try:
+    import voice_persona
+except Exception:
+    voice_persona = None
 if emotion_model is not None or intent_model is not None or topic_ner is not None or nlp_understanding is not None:
     print("[NLP] 情感/意图分类/话题NER/统一多任务理解模块已接入（权重缺失时自动回退规则）")
+if voice_persona is not None:
+    print("[语音拟人化] 场景情绪识别 + 多情绪标签参数模型已接入（配置可热更新）")
 
 # ---------- 全量群消息解析器注入 ----------
 # 思知/QQ 在「群消息」权限开通后，会推送 GROUP_MESSAGE_CREATE（群内所有消息，不止@）。
@@ -3988,16 +3994,54 @@ def _split_for_tts(text, maxc):
     return chunks or [text[:maxc]]
 
 
-async def _send_voice(message, text, style=None):
+def _voice_ctx(message, scene=None):
+    """提取语音拟人化所需的上下文信号（字段缺失一律容错，不阻断发语音）。"""
+    ctx = {"scene_hint": scene}
+    try:
+        ctx["is_at"] = bool(getattr(message, "_mentioned", False)
+                            or getattr(message, "_is_name_mention", False))
+    except Exception:
+        ctx["is_at"] = False
+    ctx["is_private"] = not bool(getattr(message, "group_openid", None))
+    try:
+        oid = getattr(getattr(message, "author", None), "user_openid", None)
+        ctx["is_owner"] = bool(oid and oid == _OWNER_OPENID)
+    except Exception:
+        ctx["is_owner"] = False
+    try:
+        recent = list(_SEEN.values())[-5:] if isinstance(_SEEN, dict) else list(_SEEN)[-5:]
+        ctx["recent_texts"] = [x.get("text", "") for x in recent
+                               if isinstance(x, dict) and isinstance(x.get("text", ""), str)]
+    except Exception:
+        ctx["recent_texts"] = []
+    return ctx
+
+
+async def _send_voice(message, text, style=None, scene=None):
     """把文字 TTS 成语音并当语音消息(file_type=3)发出；长文本自动分段发送。
 
     返回 True 表示成功；失败返回可读的错误字符串（自身不主动回复，由调用方决定怎么提示）。
     style: 可选情绪描述（覆盖 voice_config.json 里的 style），用于 mimo-v2.5-tts-voicedesign 模型。
+    scene: 场景提示（chat/proactive/story/greeting…），交给语音拟人化模块做情绪判别。
     """
     maxc = int(load_voice_config().get("max_chars", CONFIG.get("VOICE_MAX_CHARS") or 150))
     spoken = _spoken_text(text)
     if not spoken:
         return "没有可念的文字"
+    # 语音拟人化：场景情绪识别 → 多标签 → 风格指令/语速；显式指定的情绪默认保留
+    _vp = None
+    if voice_persona is not None:
+        try:
+            _vp = voice_persona.resolve(spoken, mtype=scene,
+                                        ctx=_voice_ctx(message, scene),
+                                        base_style=style)
+            if _vp and _vp.debug:
+                print(f"[语音拟人化] {_vp.debug}")
+        except Exception as e:
+            print(f"[语音拟人化] 判别失败，回退原语音逻辑：{e}")
+            _vp = None
+    if _vp and _vp.style:
+        style = _vp.style
     chunks = _split_for_tts(spoken, maxc)
     api = BOT_API
     if api is None:
@@ -4013,12 +4057,14 @@ async def _send_voice(message, text, style=None):
         if not audio:
             return err or "未知错误"
         # 输出音效后处理（氦气/低沉等）；无 ffmpeg 时原样返回
-        _eff = load_voice_config().get("effect") or "none"
+        _eff = (_vp.effect if (_vp and _vp.effect) else None) or load_voice_config().get("effect") or "none"
         if _eff and _eff != "none":
             audio, ext = await asyncio.to_thread(_apply_audio_effect, audio, _eff)
         else:
             ext = "mp3"
         _spd = float(load_voice_config().get("voice_speed") or 1.0)
+        if _vp and _vp.speed_ratio:
+            _spd *= float(_vp.speed_ratio)
         if abs(_spd - 1.0) >= 0.01:
             audio, ext = await asyncio.to_thread(_apply_audio_speed, audio, _spd)
         try:
@@ -4165,20 +4211,43 @@ async def _push_voice(group_openid, text, style=None):
     spoken = _spoken_text(text)
     if not spoken:
         return "没有可念的文字"
+    # 道安走 greeting 场景；无 source message，故手工构造最小上下文
+    _vp = None
+    if voice_persona is not None:
+        try:
+            _vp = voice_persona.resolve(
+                spoken, mtype="greeting",
+                ctx={"scene_hint": "greeting", "is_private": False, "is_at": False,
+                     "is_owner": False, "recent_texts": []},
+                base_style=style)
+            if _vp and _vp.debug:
+                print(f"[语音拟人化] {_vp.debug}")
+        except Exception as e:
+            print(f"[语音拟人化] 判别失败，回退原语音逻辑：{e}")
+            _vp = None
+    if _vp and _vp.style:
+        style = _vp.style
     chunks = _split_for_tts(spoken, maxc)
     api = BOT_API
     if api is None:
         return "机器人还在启动中，稍后再试"
     for ch in chunks:
-        audio, err = await asyncio.to_thread(_tts_mimo, ch, style=style)
+        # 与其他语音入口保持一致：读 tts_backend，不再硬编码 MiMo
+        backend = load_voice_config().get("tts_backend") or "mimo"
+        if backend == "voice_studio":
+            audio, err = await asyncio.to_thread(_tts_voice_studio, ch, style=style)
+        else:
+            audio, err = await asyncio.to_thread(_tts_mimo, ch, style=style)
         if not audio:
             return err or "未知错误"
-        _eff = load_voice_config().get("effect") or "none"
+        _eff = (_vp.effect if (_vp and _vp.effect) else None) or load_voice_config().get("effect") or "none"
         if _eff and _eff != "none":
             audio, ext = await asyncio.to_thread(_apply_audio_effect, audio, _eff)
         else:
             ext = "mp3"
         _spd = float(load_voice_config().get("voice_speed") or 1.0)
+        if _vp and _vp.speed_ratio:
+            _spd *= float(_vp.speed_ratio)
         if abs(_spd - 1.0) >= 0.01:
             audio, ext = await asyncio.to_thread(_apply_audio_speed, audio, _spd)
         try:
@@ -4207,7 +4276,7 @@ async def _maybe_speak(message, text, mtype="chat", style=None, plan=None):
         plan = _voice_plan(mtype)
     if plan == "none":
         return True
-    res = await _send_voice(message, text, style=style)
+    res = await _send_voice(message, text, style=style, scene=mtype)
     if res is not True:
         print(f"[语音] 自动语音补发未成功：{res}")
     return res
