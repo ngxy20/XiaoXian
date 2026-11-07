@@ -3592,8 +3592,17 @@ def _tts_voice_studio(text, voice=None, style=None):
         "format": "mp3",
         "sample_rate": 22050,
     }
-    if style:                      # 方言/情感/角色控制（部分模型支持）
+    style = (style or "").strip()
+    # 仅对明确支持 instruction 情感控制的模型族传 instruction；
+    # 轻量 flash 版（如 cosyvoice-v3-flash）不支持，强传会 400 InvalidParameter。
+    _INSTR_OK = ("cosyvoice2", "voicestudio", "voice-studio")
+    if style and any(k in model.lower() for k in _INSTR_OK):
+        if len(style) > 200:
+            style = style[:200]
         inp["instruction"] = style
+    elif style:
+        print(f"[VoiceStudio] 当前模型 {model} 可能不支持 instruction 情感字段，已跳过"
+              f"（语音仍合成，风格仅在 MiMo 后端生效）；如需请改用 cosyvoice2-voiceStudio 等模型。")
     payload = {"model": model, "input": inp}
     headers = {
         "Authorization": "Bearer " + key,
@@ -3604,11 +3613,24 @@ def _tts_voice_studio(text, voice=None, style=None):
         resp = requests.post(base + "/v1/tts/synthesize", headers=headers, json=payload, timeout=120)
     except Exception as e:
         return None, f"VoiceStudio 调用异常：{e}"
+    # 自愈：若带 instruction 仍 400 且错误指向 instruction，去掉该字段重试一次（模型族判断兜底）
+    if resp.status_code == 400 and style and "instruction" in (resp.text or "").lower():
+        try:
+            inp2 = {k: v for k, v in inp.items() if k != "instruction"}
+            r2 = requests.post(base + "/v1/tts/synthesize", headers=headers,
+                               json={"model": model, "input": inp2}, timeout=120)
+            if r2.status_code == 200:
+                print(f"[VoiceStudio] instruction 触发 400，已回退纯音色合成（风格：{style[:30]}）")
+                resp = r2
+            else:
+                resp = r2
+        except Exception:
+            pass
     if resp.status_code != 200:
-        body = (resp.text or "")[:300]
+        body = (resp.text or "")
         if resp.status_code in (401, 403):
-            return None, f"VoiceStudio 鉴权失败（{resp.status_code}）：VOICE_STUDIO_API_KEY 无效 —— {body}"
-        return None, f"VoiceStudio 返回 {resp.status_code}：{body}"
+            return None, f"VoiceStudio 鉴权失败（{resp.status_code}）：VOICE_STUDIO_API_KEY 无效 —— {body[:300]}"
+        return None, f"VoiceStudio 返回 {resp.status_code}：{body[:300]}"
     try:
         data = resp.json()
     except Exception as e:
