@@ -4112,7 +4112,12 @@ async def _send_voice(message, text, style=None, scene=None):
         except Exception as e:
             print(f"[语音拟人化] 判别失败，回退原语音逻辑：{e}")
             _vp = None
-    if _vp and _vp.style:
+    # 语音拟人化主要贡献「语速/音效」；风格指令(style)仅在以下情况才覆盖 TTS 的 style：
+    #  ① 配置了专属小忺音色（voiceclone，音色恒定，style 仅作语气指令，安全）；
+    #  ② 调用方已显式指定情绪（故事点名情绪 / /情绪 命令 等用户主动要的风格）。
+    # 其余普通自动语音（style=None 且无样音）保持固定音色，不切 voicedesign，
+    # 以免 MiMo 每次按情绪描述换音色（与 /说 命令保持一致，避免“别的音色”）。
+    if _vp and _vp.style and (_load_voice_sample() or style):
         style = _vp.style
     chunks = _split_for_tts(spoken, maxc)
     api = BOT_API
@@ -4299,7 +4304,12 @@ async def _push_voice(group_openid, text, style=None):
         except Exception as e:
             print(f"[语音拟人化] 判别失败，回退原语音逻辑：{e}")
             _vp = None
-    if _vp and _vp.style:
+    # 语音拟人化主要贡献「语速/音效」；风格指令(style)仅在以下情况才覆盖 TTS 的 style：
+    #  ① 配置了专属小忺音色（voiceclone，音色恒定，style 仅作语气指令，安全）；
+    #  ② 调用方已显式指定情绪（故事点名情绪 / /情绪 命令 等用户主动要的风格）。
+    # 其余普通自动语音（style=None 且无样音）保持固定音色，不切 voicedesign，
+    # 以免 MiMo 每次按情绪描述换音色（与 /说 命令保持一致，避免“别的音色”）。
+    if _vp and _vp.style and (_load_voice_sample() or style):
         style = _vp.style
     chunks = _split_for_tts(spoken, maxc)
     api = BOT_API
