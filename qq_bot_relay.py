@@ -3116,6 +3116,53 @@ def _narrative_directive(nk):
             f"不要反问、不要解释、不要只给开头或结尾，200字以内。】")
 
 
+# —— 认错 / 道歉系统 ——
+# 真实纠错（用户指出小忺犯错）：需有「小忺上一条回复」上下文才成立，避免无的放矢；
+# 逗趣「让你认错」类调侃交给下方 _NATURAL_RULES 的嘴硬规则接话，不在此触发道歉。
+_CORRECTION_TEASE = re.compile(
+    r"(认错吗|错了吗|知道错|快认错|去认错|给我认错|罚你认错|你认错|叫你认错|要不要认错|该认错|给我道歉)")
+_CORRECTION_HIT = re.compile(
+    r"(你|小忺|你这|你又|你个|你刚|刚才你).{0,8}?(错|不对|搞错|记错|理解错|弄错|搞反|说反|讲错|回错|答错|误解|乱说|教坏|误导|瞎说|胡说|骗我|忽悠|记混)"
+    r"|不对吧|不是这样|不是吧|这不对|那不对|说错了|搞错了|你错了|你错|错了呀|你搞|你记|你理解|你居然搞")
+
+
+def _is_correction(content, my_last):
+    """判断用户是否在指出小忺犯了错。返回 True=真实纠错；逗趣调侃返回 False。"""
+    if not content or not my_last:
+        return False
+    if _CORRECTION_TEASE.search(content):
+        return False
+    return bool(_CORRECTION_HIT.search(content))
+
+
+def _last_bot_text(context_id):
+    """取记忆里小忺在该上下文最近的一条回复（道歉时引用『我刚才说的那句』）。"""
+    try:
+        for m in memory.get_history(context_id, max_turns=20):
+            if m.get("role") == "bot":
+                return (m.get("text") or "")
+    except Exception:
+        pass
+    return ""
+
+
+def _apology_directive():
+    """给 LLM 的强指令：诚恳认错 + 总结错误，压过人设里可能的嘴硬/傲娇倾向。"""
+    return ("【系统指令：用户正在指出你刚才说错或做得不对的地方。请先诚恳认错并道歉，"
+            "再简要说明你错在哪里（必须基于对话上下文，不要编造没说过的话），语气真诚、内疚、温柔，"
+            "不要狡辩、不要反问、不要转移话题、不要过度道歉到肉麻，120字以内。】")
+
+
+def _make_apology(content, userid, sender, my_last, history_text):
+    """智能分析上下文，总结错误并生成诚恳道歉（复用 get_answer，人设已注入、强指令压过嘴硬）。"""
+    q = (_apology_directive() + "\n\n"
+         f"[你上一条说的话：「{my_last}」]\n"
+         f"[用户现在指出：「{content}」]\n")
+    if history_text:
+        q += f"[最近对话：\n{history_text}]"
+    return get_answer(q, userid, profile_id=sender, speaker_name=_get_member_name(sender))
+
+
 def _narrative_style(nk, text):
     """选语音情绪：用户点名了情绪/类型 → 直接用对应预设（确定、省词元）；否则智能判断正文情绪。"""
     mood = (nk or {}).get("mood") or ""
@@ -4217,6 +4264,8 @@ def _voice_plan(mtype):
     决策顺序：开关 -> 消息类型 -> 触发频率(frequency) -> 语音独占概率(voice_only_chance)。
     返回的方案由调用方统一决定「是否发文字 + 是否发语音」，避免重复掷骰导致两者不一致。
     """
+    if mtype == "apology":   # 道歉复用聊天的语音方案（情绪仍由 voice_persona 的 apology 场景处理）
+        mtype = "chat"
     cfg = load_voice_config()
     if not cfg.get("enabled"):
         return "none"
@@ -6759,6 +6808,7 @@ def main():
     class QQBot(Client):
         async def _group_reply(self, message, content, targets, group_id, author, sender):
             """群消息统一回复逻辑（被 @ 或主动识别到被@ 时调用）。"""
+            is_apology = False
             # 实时记录群友原始消息，作为情感训练语料（仅存原文，不打标）
             _log_raw_message(message, content, kind="group")
             has_image = bool(_extract_media(message).get("images"))  # 有图先走视觉，别跑「找图」捷径
@@ -6854,6 +6904,16 @@ def main():
                 if sing_theme is not None:
                     await _handle_sing(message, "唱 " + (sing_theme or ""), group_id)
                     return
+                # —— 认错/道歉系统：用户指出小忺犯错时，优先诚恳道歉并总结错误 ——
+                _apol_my = _last_bot_text(group_id)
+                if not (has_image or nk) and _is_correction(content, _apol_my):
+                    _apol = await asyncio.to_thread(
+                        _make_apology, content, group_id, sender, _apol_my,
+                        memory.format_history(group_id))
+                    if _apol:
+                        reply = _apol
+                        reply_kind = "chat"
+                        is_apology = True
                 # 叙事请求不走固定话术：否则「讲个故事开心」会被「开心」闲聊规则抢答，讲不出故事
                 reply = None if (has_image or nk) else _natural_reply(content, ctx)
                 if reply is None:
@@ -6909,7 +6969,7 @@ def main():
                     memory.record(group_id, "bot", "忺", reply)
                     if plan != "none":
                         # 普通聊天固定音色：不逐句算情绪（逐句算会切 voicedesign 模型，音色一直变很难受）
-                        vok = await _maybe_speak(message, reply, mtype=reply_kind, style=None, plan=plan)
+                        vok = await _maybe_speak(message, reply, mtype="apology" if is_apology else reply_kind, style=None, plan=plan)
                         if plan == "voice_only" and vok is not True:
                             await _reply(message, content=reply)
 
@@ -7220,6 +7280,7 @@ def main():
 
         async def on_c2c_message_create(self, message: C2CMessage):
             # 私聊（单聊）消息：没有 @ 前缀，直接拿正文
+            is_apology = False
             if CONFIG.get("REPLY_PRIVATE") is False:
                 return
             content = (message.content or "").strip()
@@ -7324,6 +7385,16 @@ def main():
                 if sing_theme is not None:
                     await _handle_sing(message, "唱 " + (sing_theme or ""), sender)
                     return
+                # —— 认错/道歉系统：用户指出小忺犯错时，优先诚恳道歉并总结错误 ——
+                _apol_my = _last_bot_text(sender)
+                if not (has_image or nk) and _is_correction(content, _apol_my):
+                    _apol = await asyncio.to_thread(
+                        _make_apology, content, sender, sender, _apol_my,
+                        memory.format_history(sender))
+                    if _apol:
+                        reply = _apol
+                        reply_kind = "chat"
+                        is_apology = True
                 # 叙事请求不走固定话术：否则「讲个故事开心」会被「开心」闲聊规则抢答，讲不出故事
                 reply = None if (has_image or nk) else _natural_reply(content, ctx)
                 if reply is None:
@@ -7372,8 +7443,7 @@ def main():
                             await _reply_with_possible_image(message, content, reply)
                     memory.record(sender, "bot", "忺", reply)
                     if plan != "none":
-                        # 私聊也固定音色：不逐句算情绪（同群聊，避免音色一直变）
-                        vok = await _maybe_speak(message, reply, mtype=reply_kind, style=None, plan=plan)
+                        vok = await _maybe_speak(message, reply, mtype="apology" if is_apology else reply_kind, style=None, plan=plan)
                         if plan == "voice_only" and vok is not True:
                             await _reply(message, content=reply)
 

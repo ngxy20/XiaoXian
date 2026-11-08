@@ -132,7 +132,7 @@ def recognize_scene(text, mtype=None, ctx=None):
     """
     ctx = ctx or {}
     t = text or ""
-    valid = {"chat", "proactive", "story", "command", "greeting", "private", "at", "comfort", "celebrate"}
+    valid = {"chat", "proactive", "story", "command", "greeting", "private", "at", "comfort", "celebrate", "apology"}
     hint = ctx.get("scene_hint")
     base = hint if isinstance(hint, str) and hint in valid else (
         mtype if isinstance(mtype, str) and mtype in valid else "chat")
@@ -147,6 +147,9 @@ def recognize_scene(text, mtype=None, ctx=None):
             pass
     if intent == "story" or _STORY_RE.search(t):
         base = "story"
+    # 道歉兜底：小忺自己的回复里出现歉意词（mtype="apology" 已由调用方优先设置）
+    if re.search(r"抱歉|对不起|我的错|我错了|认错|愧疚|反省|疏忽|失误|不该这样|不好意思", t):
+        base = "apology"
 
     comfort_kw = ("难过", "伤心", "哭", "委屈", "好累", "崩溃", "想哭", "不开心", "低落", "安慰", "难受")
     joy_kw = ("好开心", "太棒", "中奖", "成功", "好耶", "庆祝", "恭喜", "通过了", "太好了")
